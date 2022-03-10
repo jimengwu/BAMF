@@ -15,8 +15,6 @@ sns.set_style("whitegrid")
 sns.set_context("poster", font_scale=2.0)
 sns.set_palette(sns.color_palette("colorblind"))
 
-#TODO: make them take the quantile xarray
-
 def plot_diagnostic(di, name, thresh=0.05):
     
     n = int(di.shape[0]/2)
