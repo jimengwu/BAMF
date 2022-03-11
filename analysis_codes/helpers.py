@@ -138,12 +138,12 @@ def generate_options(filepath):
 
 def dump_hdf5(filename, **data):
 
-    for i, k in data.items():
-        print(i, type(k))
+    #for i, k in data.items():
+    #    print(i, type(k))
 
     with h5py.File(filename, 'w') as f:
         for name,d in data.items():
-            print("Saving:", name)
+        #    print("Saving:", name)
         
             if type(d) is list:
                 #So apparently hdf5 library doesn't like unicode.
