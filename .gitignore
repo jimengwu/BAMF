@@ -1,0 +1,4 @@
+plots/**
+results/**
+models/**.pkl
+analysis_codes/__pycache__/**
