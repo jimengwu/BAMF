@@ -505,7 +505,7 @@ def analyze_frame(dataset, benchmark=False, match_file=None, distance_metric="ci
             data["labels"] = labels
 
             if len(unresolved) > 0:
-                for kk in range(unresolved):
+                for kk in range(len(unresolved)):
                     data["labels"] = np.append(data["labels"], "?"+str(kk))
 
             data["reference_F"] = match_profiles
