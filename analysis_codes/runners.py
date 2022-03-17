@@ -418,9 +418,6 @@ def run_model(action, datafile, description, init, loader, model, iterations, co
 
             inits = premodel.optimizing(data, **preoptions, as_vector=True)
 
-            print(type(inits))
-            print(inits)
-
             return inits
 
 
