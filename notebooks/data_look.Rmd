@@ -1,0 +1,67 @@
+---
+title: "Data look"
+output: html_notebook
+---
+
+```{r}
+library(tidyr)
+setwd("~/git/BAMF/notebooks")
+G_ = read.csv(file = "../data/example_data_G.csv",header=TRUE)
+F_ = read.csv(file = "../data/example_data_F.csv",header=TRUE)
+E_ = read.csv(file = "../data/example_data_E.csv", header=TRUE)
+X_ = read.csv(file = "../data/example_data_X.csv", header=TRUE)
+
+```
+
+
+```{r}
+library(cmdstanr)
+set_cmdstan_path("~/cmdstan")
+file = "../models/bamf.stan"
+mod <- cmdstan_model(file,compile = FALSE)
+N <- nrow(G_[,-1])
+M <- ncol(X_[,-1])
+P <- ncol(G_[,-1])
+t <- G_[,1]
+t <- (t - t[1])/(1e9)/3600
+t<- diff(t)
+X_ <- X_[,-1]
+E_ <- E_[,-1]
+data_list <- list(n=N, m=M , p=P, X=X_, sigma=E_, timesteps=t, minerr=
+    min((E_)) / 10
+)
+```
+
+```{r}
+mod$.__enclos_env__$private$hpp_file_ <- "/Users/Daniel/git/BAMF/models/bamf.hpp"
+mod$.__enclos_env__$private$exe_file_ <- "/Users/Daniel/git/BAMF/models/bamf"
+fit <- mod$sample(
+  data = data_list, 
+  seed = 123, 
+  chains = 4, 
+  parallel_chains = 4,
+  refresh = 500 # print update every 500 iters
+)
+```
+```{r}
+library(posterior)
+fit$diagnostic_summary()
+
+```
+```{r}
+library(bayesplot)
+fit$cmdstan_diagnose()
+```
+
+```{r}
+mcmc_rhat(rhat(fit))
+```
+
+```{r}
+mcmc_neff(neff_ratio(fit))
+```
+
+```{r}
+which.max(neff_ratio(fit))
+```
+
