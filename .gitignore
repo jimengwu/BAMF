@@ -2,3 +2,4 @@ plots/**
 results/**
 models/**.pkl
 analysis_codes/__pycache__/**
+.Rproj.user
