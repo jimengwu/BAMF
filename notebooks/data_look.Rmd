@@ -11,14 +11,6 @@ F_ = read.csv(file = "../data/example_data_F.csv",header=TRUE)
 E_ = read.csv(file = "../data/example_data_E.csv", header=TRUE)
 X_ = read.csv(file = "../data/example_data_X.csv", header=TRUE)
 
-```
-
-
-```{r}
-library(cmdstanr)
-set_cmdstan_path("~/cmdstan")
-file = "../models/bamf.stan"
-mod <- cmdstan_model(file)
 N <- nrow(G_[,-1])
 M <- ncol(X_[,-1])
 P <- ncol(G_[,-1])
@@ -27,10 +19,54 @@ t <- (t - t[1])/(1e9)/3600
 t<- diff(t)
 X_ <- X_[,-1]
 E_ <- E_[,-1]
+F_ <- F_[,-1]
+G_ <- G_[,-1]
+F_ <- apply(F_, MARGIN=2, FUN = as.numeric)
+```
 
 
+
+```{r}
+library(ggfortify)
+imputed_ts_data <- apply(X_, MARGIN = 2, \(x){
+  y=x
+  y[is.na(x)]=mean(x,na.rm=TRUE)
+  y
+  } )
+```
+
+```{r}
+pca <- prcomp(imputed_ts_data, scale. = TRUE)
+autoplot(pca)
+```
+
+
+```{r}
+library(vsp)
+fa <- imputed_ts_data %>% as.matrix() %>% vsp( rank = 3)
+```
+
+```{r}
+plot_varimax_z_pairs(fa)
+```
+
+
+```{r}
+library(corrplot)
+corrplot(cor(G_, as.matrix(fa$Z), use = "pairwise.complete.obs"))
+```
+
+
+## sampling
+ 
+```{r}
+library(cmdstanr)
+set_cmdstan_path("~/cmdstan")
+file = "../models/bamf.stan"
+
+mod <- cmdstan_model(file)
 data_list <- list(n=N, m=M , p=P, X=X_, sigma=E_, timesteps=t, minerr=
-    min((E_)) / 10
+    min((E_)) / 10, F=F_
 )
 ```
 
@@ -64,4 +100,152 @@ mcmc_neff(neff_ratio(fit))
 
 ```{r}
 which.max(neff_ratio(fit))
+```
+
+
+```{r}
+draws <- fit$draws(format="df")
+```
+
+```{r}
+library(tidyverse)
+G_1 <- as_tibble(draws) %>% select( matches('G\\[\\d+,1'))
+G_2 <- as_tibble(draws) %>% select( matches('G\\[\\d+,2'))
+G_3 <- as_tibble(draws) %>% select( matches('G\\[\\d+,3'))
+```
+
+
+```{r}
+G_1 %>% pivot_longer(colnames(G_1), names_to="variables",values_to = "samples") %>% ggplot() + geom_point(mapping=aes(variables,samples))
+```
+```{r}
+G1_mean <- G_1 %>% colMeans()
+plot(G1_mean)
+```
+```{r}
+corrplot(cor(G1_mean,G_))
+```
+```{r}
+plot(G_[,1],G1_mean)
+```
+
+```{r}
+plot(G_[,1],as.matrix(fa$Z)[,1])
+
+```
+
+## Look at the simplex
+
+
+```{r}
+plot(F_[1,])
+plot(F_[2,])
+plot(F_[3,])
+summary(F_[1,])
+```
+```{r}
+F_sparse = F_
+F_sparse[F_sparse<0.005] <- 0
+
+F_sparse <- apply(F_sparse, MARGIN = 2, FUN = \(x) {x/rowSums(F_sparse)})
+plot(F_sparse[1,])
+```
+```{r}
+
+data_list <- list(n=N, m=M , p=P, X=X_, sigma=E_, timesteps=t, minerr=
+    min((E_)) / 10, F=F_sparse
+)
+```
+
+```{r}
+fit <- mod$sample(
+  data = data_list, 
+  seed = 123, 
+  chains = 4, 
+  parallel_chains = 4,
+  refresh = 500 # print update every 500 iters
+)
+```
+
+```{r}
+
+draws <- fit$draws(format="df")
+```
+
+```{r}
+library(tidyverse)
+G_1 <- as_tibble(draws) %>% select( matches('G\\[\\d+,1'))
+G_2 <- as_tibble(draws) %>% select( matches('G\\[\\d+,2'))
+G_3 <- as_tibble(draws) %>% select( matches('G\\[\\d+,3'))
+```
+
+```{r}
+G1_mean <- G_1 %>% colMeans()
+plot(G_[,1],G1_mean)
+
+```
+
+
+```{r}
+plot(G_[,2],G_[,3])
+```
+
+## Sparsifying the simplex using the concentration parameter.
+
+```{r}
+alpha = 0.01
+data_list <- list(n=N, m=M , p=P, X=X_, sigma=E_, timesteps=t, minerr=
+    min((E_)) / 10, concentration= alpha*(rep(1,M))
+)
+
+
+```
+
+
+```{r}
+file = "../models/bamf_sparse.stan"
+
+mod <- cmdstan_model(file)
+
+fit <- mod$sample(
+  data = data_list, 
+  seed = 123, 
+  chains = 4, 
+  parallel_chains = 4,
+  refresh = 500 # print update every 500 iters
+)
+```
+
+```{r}
+
+library(posterior)
+fit$diagnostic_summary()
+```
+
+```{r}
+fit$cmdstan_diagnose()
+
+```
+
+```{r}
+
+draws <- fit$draws(format="df")
+```
+
+
+```{r}
+library(tidyverse)
+G_1 <- as_tibble(draws) %>% select( matches('G\\[\\d+,1'))
+G_2 <- as_tibble(draws) %>% select( matches('G\\[\\d+,2'))
+G_3 <- as_tibble(draws) %>% select( matches('G\\[\\d+,3'))
+```
+
+```{r}
+G1_mean <- G_1 %>% colMeans()
+plot(G_[,1],G1_mean)
+G_data <- data.frame(G_real=G_[,1], G_predicted=G1_mean)
+summary(lm(G_real ~ G_predicted, G_data))
+```
+```{r}
+bayesplot::pp_check(object = fit)
 ```
