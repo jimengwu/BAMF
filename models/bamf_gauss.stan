@@ -15,7 +15,7 @@ data {
   matrix<lower=0>[n,m] sigma;  // separate sigma for each of the observations (!)
   vector<lower=0>[n-1] timesteps; //How much time elapses between values in X (arbitrary unit, but unit choice also affects other priors)
   real<lower=0> minerr; //Minimal error
-  matrix<lower=0>[p,m] F;
+  matrix<lower=0>[p,m] F; // F used as input
 }
 
 transformed data {
@@ -38,8 +38,8 @@ model {
   
   // Column-wise autocorrelation
   for(j in 1:p) {
-    G[1,j] ~ normal(0,100);
-    G[2:,j] ~ normal(G[:(n-1),j], alpha_a[j]*timesteps + alpha_b[j]);
+    G[1,j] ~ normal(0,100); // the first time point regularised
+    G[2:,j] ~ normal(G[:(n-1),j], alpha_a[j]*timesteps + alpha_b[j]); // gaussian
   }
 
   // X ~ Z = G * F

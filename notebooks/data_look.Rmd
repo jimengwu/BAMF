@@ -1,11 +1,16 @@
 ---
-title: "Data look"
+title: "BAMF models evaluation"
 output: html_notebook
 ---
 
+# DATA
+
+Here we load the small simulated data set. For this case $p=3$.
+
+We remove the first column of each matrix as it contains the indexes.
+
 ```{r}
 library(tidyr)
-setwd("~/git/BAMF/notebooks")
 G_ = read.csv(file = "../data/example_data_G.csv",header=TRUE)
 F_ = read.csv(file = "../data/example_data_F.csv",header=TRUE)
 E_ = read.csv(file = "../data/example_data_E.csv", header=TRUE)
@@ -22,9 +27,18 @@ E_ <- E_[,-1]
 F_ <- F_[,-1]
 G_ <- G_[,-1]
 F_ <- apply(F_, MARGIN=2, FUN = as.numeric)
+par(mfrow=c(2,3))
+plot(G_[,1], type="l")
+plot(G_[,2], type="l")
+plot(G_[,3], type="l")
+plot(F_[1,], type="l")
+plot(F_[2,], type="l")
+plot(F_[3,], type="l")
 ```
 
+## Data characterisation
 
+We run a simple analysis on the data using the PCA, we use mean imputation in case of missing data.
 
 ```{r}
 library(ggfortify)
@@ -33,132 +47,498 @@ imputed_ts_data <- apply(X_, MARGIN = 2, \(x){
   y[is.na(x)]=mean(x,na.rm=TRUE)
   y
   } )
-```
-
-```{r}
 pca <- prcomp(imputed_ts_data, scale. = TRUE)
 autoplot(pca)
 ```
 
+## Varimax rotation
+
+A simple and quick way to do source separation is to use the Varimax rotations over the PCA
 
 ```{r}
 library(vsp)
 fa <- imputed_ts_data %>% as.matrix() %>% vsp( rank = 3)
-```
-
-```{r}
 plot_varimax_z_pairs(fa)
 ```
 
+We observe weak to moderate anticorrelation between the inferred axes.
+
+Now we correlate with the original simulated G factors
 
 ```{r}
 library(corrplot)
 corrplot(cor(G_, as.matrix(fa$Z), use = "pairwise.complete.obs"))
 ```
 
-
-## sampling
- 
 ```{r}
+par(mfrow=c(1,3))
+plot(G_[,1],as.matrix(fa$Z)[,1])
+plot(G_[,2],as.matrix(fa$Z)[,2])
+plot(G_[,3],as.matrix(fa$Z)[,3])
+```
+
+### Conclusions
+
+The sources should be well separated in this dataset.
+
+## BAMF
+
+Here is the original BAMF model:
+
+```{stan output.var=mod}
+functions {
+  matrix vector_array_to_matrix(vector[] x) {
+    matrix[size(x), rows(x[1])] y;
+    for (m in 1:size(x))
+      y[m] = x[m]';
+    return y;
+  }
+}
+
+data {
+  int<lower=1> n;     // number of data points
+  int<lower=1> m;     // number of dimensions
+  int<lower=1> p;     // number of components
+  matrix[n,m] X;      // data matrix
+  matrix<lower=0>[n,m] sigma;  // separate sigma for each of the observations (!)
+  vector<lower=0>[n-1] timesteps; //How much time elapses between values in X (arbitrary unit, but unit choice also affects other priors)
+  real<lower=0> minerr; //Minimal error
+}
+
+transformed data {
+  vector[n*m] Xv = to_vector(X);
+  vector[n*m] sigmav = to_vector(sigma);
+}
+
+parameters {
+  matrix<lower=0>[n,p] G; // score matrix
+  simplex[m] F[p]; // loadings simplex
+  vector<lower=0>[p] alpha_a; // Posterior a
+  vector<lower=minerr>[p] alpha_b; // Posterior b
+}
+
+model {
+
+  // The priors for G and F are implicitly given in the parameters section,
+  //  so explicitly stating them here would only lead to unnecessary calculations
+  //  (uniform priors become additive constants (in logspace), that can be ignored).
+  
+  // Column-wise autocorrelation
+  for(j in 1:p) {
+    G[2:,j] ~ cauchy(G[:(n-1),j], alpha_a[j]*timesteps + alpha_b[j]);
+  }
+
+  // X ~ Z = G * F
+  Xv ~ normal(to_vector(G*vector_array_to_matrix(F)), sigmav);
+
+}
+```
+
+We use cmdstan to compile and run the different models.
+
+```{r, results="hide"}
 library(cmdstanr)
 set_cmdstan_path("~/cmdstan")
 file = "../models/bamf.stan"
 
 mod <- cmdstan_model(file)
 data_list <- list(n=N, m=M , p=P, X=X_, sigma=E_, timesteps=t, minerr=
+    min((E_)) / 10
+)
+```
+
+## Original BAMF model
+
+```{r, max.height='100px'}
+
+fit_bamf <- mod$sample(
+  data = data_list, 
+  seed = 123, 
+  chains = 4, 
+  parallel_chains = 4,
+  refresh = 500 # print update every 500 iters
+)
+```
+
+```{r,max.height='100px'}
+library(posterior)
+fit_bamf$diagnostic_summary()
+```
+
+```{r,max.height='100px'}
+library(bayesplot)
+fit_bamf$cmdstan_diagnose()
+```
+
+```{r}
+mcmc_rhat(rhat(fit_bamf))
+```
+
+```{r}
+mcmc_neff(neff_ratio(fit_bamf))
+```
+
+```{r}
+draws <- fit_bamf$draws(format="df")
+```
+
+```{r}
+library(tidyverse)
+G_1 <- as_tibble(draws) %>% select( matches('G\\[\\d+,1'))
+G_2 <- as_tibble(draws) %>% select( matches('G\\[\\d+,2'))
+G_3 <- as_tibble(draws) %>% select( matches('G\\[\\d+,3'))
+F_1 <- as_tibble(draws) %>% select( matches('F\\[1,\\d'))
+F_2 <- as_tibble(draws) %>% select( matches('F\\[2,\\d'))
+F_3 <- as_tibble(draws) %>% select( matches('F\\[3,\\d'))
+```
+
+let's plot the mean over posterior samples
+
+```{r}
+G1_mean <- G_1 %>% colMeans()
+G2_mean <- G_2 %>% colMeans()
+G3_mean <- G_3 %>% colMeans()
+F1_mean <- F_1 %>% colMeans()
+F2_mean <- F_2 %>% colMeans()
+F3_mean <- F_3 %>% colMeans()
+G1_sd <- G_1 %>% as.matrix() %>% matrixStats::colSds()
+G2_sd <- G_2 %>% as.matrix() %>% matrixStats::colSds()
+G3_sd <- G_3 %>% as.matrix() %>% matrixStats::colSds()
+F1_sd <- F_1 %>% as.matrix() %>% matrixStats::colSds()
+F2_sd <- F_2 %>% as.matrix() %>% matrixStats::colSds()
+F3_sd <- F_3 %>% as.matrix() %>% matrixStats::colSds()
+par(mfrow=c(2,3)) 
+plot(G1_mean, type ="l")
+plot(G2_mean, type ="l")
+plot(G3_mean, type ="l")
+plot(F1_mean, type ="l")
+plot(F2_mean, type ="l")
+plot(F3_mean, type ="l")
+```
+
+Here we plot the correlation between the posterior means and the original G values
+
+```{r}
+corrplot(cor(cbind(G1_mean,G2_mean,G3_mean),G_))
+```
+
+Here we plot the posterior means vs the original values of G and F
+
+```{r}
+par(mfrow=c(2,3))
+plot(G_[,1],G1_mean)
+plot(G_[,2],G2_mean)
+plot(G_[,3],G3_mean)
+plot(F_[1,],F1_mean)
+plot(F_[2,],F2_mean)
+plot(F_[3,],F3_mean)
+```
+
+Here we plot the z-scores for G and F, everything should be between 2 and -2 (95% confidence interval)
+
+```{r}
+par(mfrow=c(2,3))
+plot((G_[,1]-G1_mean)/G1_sd, main="z-scores")
+abline(h=2)
+abline(h=-2)
+plot((G_[,2]-G2_mean)/G2_sd)
+abline(h=2)
+abline(h=-2)
+plot((G_[,3]-G3_mean)/G3_sd)
+abline(h=2)
+abline(h=-2)
+plot((F_[1,]-F1_mean)/F1_sd)
+abline(h=2)
+abline(h=-2)
+plot((F_[2,]-F2_mean)/F2_sd)
+abline(h=2)
+abline(h=-2)
+plot((F_[3,]-F3_mean)/F3_sd)
+abline(h=2)
+abline(h=-2)
+```
+
+Let's define some functions to carry the above diagnostics
+
+```{r}
+quick_diagnostic_plots <- function(stan_fit){
+  stan_fit$diagnostic_summary()
+  stan_fit$cmdstan_diagnose()
+  mcmc_rhat(rhat(fit_bamf))
+  mcmc_neff(neff_ratio(fit_bamf))
+  draws <- stan_fit$draws(format="df")
+  G_1 <- as_tibble(draws) %>% select( matches('G\\[\\d+,1'))
+  G_2 <- as_tibble(draws) %>% select( matches('G\\[\\d+,2'))
+  G_3 <- as_tibble(draws) %>% select( matches('G\\[\\d+,3'))
+  F_1 <- as_tibble(draws) %>% select( matches('F\\[1,\\d'))
+  F_2 <- as_tibble(draws) %>% select( matches('F\\[2,\\d'))
+  F_3 <- as_tibble(draws) %>% select( matches('F\\[3,\\d'))
+  G1_mean <- G_1 %>% colMeans()
+  G2_mean <- G_2 %>% colMeans()
+  G3_mean <- G_3 %>% colMeans()
+  F1_mean <- F_1 %>% colMeans()
+  F2_mean <- F_2 %>% colMeans()
+  F3_mean <- F_3 %>% colMeans()
+  G1_sd <- G_1 %>% as.matrix() %>% matrixStats::colSds()
+  G2_sd <- G_2 %>% as.matrix() %>% matrixStats::colSds()
+  G3_sd <- G_3 %>% as.matrix() %>% matrixStats::colSds()
+  F1_sd <- F_1 %>% as.matrix() %>% matrixStats::colSds()
+  F2_sd <- F_2 %>% as.matrix() %>% matrixStats::colSds()
+  F3_sd <- F_3 %>% as.matrix() %>% matrixStats::colSds()
+  par(mfrow=c(2,3)) 
+  plot(G1_mean, type ="l")
+  plot(G2_mean, type ="l")
+  plot(G3_mean, type ="l")
+  plot(F1_mean, type ="l")
+  plot(F2_mean, type ="l")
+  plot(F3_mean, type ="l")
+  dev.off()
+  corrplot(cor(cbind(G1_mean,G2_mean,G3_mean),G_))
+  dev.off()
+  par(mfrow=c(2,3))
+  plot(G_[,1],G1_mean)
+  plot(G_[,2],G2_mean)
+  plot(G_[,3],G3_mean)
+  plot(F_[1,],F1_mean)
+  plot(F_[2,],F2_mean)
+  plot(F_[3,],F3_mean)
+  dev.off()
+  par(mfrow=c(2,3))
+  plot((G_[,1]-G1_mean)/G1_sd)
+  abline(h=2)
+  abline(h=-2)
+  plot((G_[,2]-G2_mean)/G2_sd)
+  abline(h=2)
+  abline(h=-2)
+  plot((G_[,3]-G3_mean)/G3_sd)
+  abline(h=2)
+  abline(h=-2)
+  plot((F_[1,]-F1_mean)/F1_sd)
+  abline(h=2)
+  abline(h=-2)
+  plot((F_[2,]-F2_mean)/F2_sd)
+  abline(h=2)
+  abline(h=-2)
+  plot((F_[3,]-F3_mean)/F3_sd)
+  abline(h=2)
+  abline(h=-2)
+}
+
+quick_diagnostic_plots_with_F <- function(stan_fit){
+  stan_fit$diagnostic_summary()
+  stan_fit$cmdstan_diagnose()
+  mcmc_rhat(rhat(stan_fit))
+  mcmc_neff(neff_ratio(stan_fit))
+  draws <- stan_fit$draws(format="df")
+  G_1 <- as_tibble(draws) %>% select( matches('G\\[\\d+,1'))
+  G_2 <- as_tibble(draws) %>% select( matches('G\\[\\d+,2'))
+  G_3 <- as_tibble(draws) %>% select( matches('G\\[\\d+,3'))
+  G1_mean <- G_1 %>% colMeans()
+  G2_mean <- G_2 %>% colMeans()
+  G3_mean <- G_3 %>% colMeans()
+  G1_sd <- G_1 %>% as.matrix() %>% matrixStats::colSds()
+  G2_sd <- G_2 %>% as.matrix() %>% matrixStats::colSds()
+  G3_sd <- G_3 %>% as.matrix() %>% matrixStats::colSds()
+  par(mfrow=c(1,3)) 
+  plot(G1_mean, type ="l")
+  plot(G2_mean, type ="l")
+  plot(G3_mean, type ="l")
+  dev.off()
+  corrplot(cor(cbind(G1_mean,G2_mean,G3_mean),G_))
+  dev.off()
+  par(mfrow=c(2,3))
+  plot(G_[,1],G1_mean)
+  plot(G_[,2],G2_mean)
+  plot(G_[,3],G3_mean)
+  dev.off()
+  par(mfrow=c(2,3))
+  plot((G_[,1]-G1_mean)/G1_sd)
+  plot((G_[,2]-G2_mean)/G2_sd)
+  plot((G_[,3]-G3_mean)/G3_sd)
+}
+
+
+quick_diagnostic_plots_MAP<- function(stan_fit){
+  draws <- stan_fit$draws(format="df")
+  G_1 <- as_tibble(draws) %>% select( matches('G\\[\\d+,1'))
+  G_2 <- as_tibble(draws) %>% select( matches('G\\[\\d+,2'))
+  G_3 <- as_tibble(draws) %>% select( matches('G\\[\\d+,3'))
+  F_1 <- as_tibble(draws) %>% select( matches('F\\[1,\\d'))
+  F_2 <- as_tibble(draws) %>% select( matches('F\\[2,\\d'))
+  F_3 <- as_tibble(draws) %>% select( matches('F\\[3,\\d'))
+  G1_mean <- G_1 %>% as.matrix()
+  G2_mean <- G_2 %>% as.matrix()
+  G3_mean <- G_3%>% as.matrix()
+   F1_mean <- F_1%>% as.matrix()
+  F2_mean <- F_2 %>% as.matrix()
+  F3_mean <- F_3 %>% as.matrix()
+  par(mfrow=c(2,3)) 
+  plot(t(G1_mean),type="l")
+  plot(t(G2_mean),type="l")
+  plot(t(G3_mean),type="l")
+  plot(t(F1_mean),type="l")
+  plot(t(F2_mean),type="l")
+  plot(t(F3_mean),type="l")
+  dev.off()
+  corrplot(cor(cbind(t(G1_mean),t(G2_mean),t(G3_mean)),G_))
+  dev.off()
+  par(mfrow=c(2,3))
+  plot(G_[,1],t(G1_mean))
+  plot(G_[,2],t(G2_mean))
+  plot(G_[,3],t(G3_mean))
+  plot(F_[1,],t(F1_mean))
+  plot(F_[2,],t(F2_mean))
+  plot(F_[3,],t(F3_mean))
+  dev.off()
+}
+
+```
+
+## Look at the simplex: BAMF_F
+
+Let's include the simplex as an input:
+
+```{stan}
+functions {
+  matrix vector_array_to_matrix(vector[] x) {
+    matrix[size(x), rows(x[1])] y;
+    for (m in 1:size(x))
+      y[m] = x[m]';
+    return y;
+  }
+}
+
+data {
+  int<lower=1> n;     // number of data points
+  int<lower=1> m;     // number of dimensions
+  int<lower=1> p;     // number of components
+  matrix[n,m] X;      // data matrix
+  matrix<lower=0>[n,m] sigma;  // separate sigma for each of the observations (!)
+  vector<lower=0>[n-1] timesteps; //How much time elapses between values in X (arbitrary unit, but unit choice also affects other priors)
+  real<lower=0> minerr; //Minimal error
+  matrix<lower=0>[p,m] F; // now we use the original F as data
+}
+
+transformed data {
+  vector[n*m] Xv = to_vector(X);
+  vector[n*m] sigmav = to_vector(sigma);
+}
+
+parameters {
+  matrix<lower=0>[n,p] G; // score matrix
+  vector<lower=0>[p] alpha_a; // Posterior a
+  vector<lower=minerr>[p] alpha_b; // Posterior b
+}
+
+model {
+
+  // The priors for G and F are implicitly given in the parameters section,
+  //  so explicitly stating them here would only lead to unnecessary calculations
+  //  (uniform priors become additive constants (in logspace), that can be ignored).
+  
+  // Column-wise autocorrelation
+  for(j in 1:p) {
+    G[2:,j] ~ cauchy(G[:(n-1),j], alpha_a[j]*timesteps + alpha_b[j]);
+  }
+
+  // X ~ Z = G * F
+  Xv ~ normal(to_vector(G*F), sigmav);
+
+}
+
+```
+
+And now lets sample
+
+```{r, results="hide"}
+file = "../models/bamf_F.stan"
+
+mod_f <- cmdstan_model(file)
+data_list <- list(n=N, m=M , p=P, X=X_, sigma=E_, timesteps=t, minerr=
     min((E_)) / 10, F=F_
 )
-```
-
-```{r}
-
-fit <- mod$sample(
+fit_bamf_f <- mod_f$sample(
   data = data_list, 
   seed = 123, 
   chains = 4, 
   parallel_chains = 4,
   refresh = 500 # print update every 500 iters
 )
-```
-```{r}
-library(posterior)
-fit$diagnostic_summary()
-
-```
-```{r}
-library(bayesplot)
-fit$cmdstan_diagnose()
-```
-
-```{r}
-mcmc_rhat(rhat(fit))
-```
-
-```{r}
-mcmc_neff(neff_ratio(fit))
-```
-
-```{r}
-which.max(neff_ratio(fit))
-```
-
-
-```{r}
-draws <- fit$draws(format="df")
-```
-
-```{r}
-library(tidyverse)
-G_1 <- as_tibble(draws) %>% select( matches('G\\[\\d+,1'))
-G_2 <- as_tibble(draws) %>% select( matches('G\\[\\d+,2'))
-G_3 <- as_tibble(draws) %>% select( matches('G\\[\\d+,3'))
-```
-
-
-```{r}
-G_1 %>% pivot_longer(colnames(G_1), names_to="variables",values_to = "samples") %>% ggplot() + geom_point(mapping=aes(variables,samples))
-```
-```{r}
-G1_mean <- G_1 %>% colMeans()
-plot(G1_mean)
-```
-```{r}
-corrplot(cor(G1_mean,G_))
-```
-```{r}
-plot(G_[,1],G1_mean)
-```
-
-```{r}
-plot(G_[,1],as.matrix(fa$Z)[,1])
 
 ```
 
-## Look at the simplex
-
-
 ```{r}
-plot(F_[1,])
-plot(F_[2,])
-plot(F_[3,])
-summary(F_[1,])
+quick_diagnostic_plots_with_F(fit_bamf_f)
+
 ```
-```{r}
-F_sparse = F_
-F_sparse[F_sparse<0.005] <- 0
 
-F_sparse <- apply(F_sparse, MARGIN = 2, FUN = \(x) {x/rowSums(F_sparse)})
-plot(F_sparse[1,])
+## Gaussian model with F as input: BAMF_gauss
+
+We try to see how necessary is the Cauchy prior We replace the Cauchy with a Gaussian, still, with F as data
+
+```{stan}
+functions {
+  matrix vector_array_to_matrix(vector[] x) {
+    matrix[size(x), rows(x[1])] y;
+    for (m in 1:size(x))
+      y[m] = x[m]';
+    return y;
+  }
+}
+
+data {
+  int<lower=1> n;     // number of data points
+  int<lower=1> m;     // number of dimensions
+  int<lower=1> p;     // number of components
+  matrix[n,m] X;      // data matrix
+  matrix<lower=0>[n,m] sigma;  // separate sigma for each of the observations (!)
+  vector<lower=0>[n-1] timesteps; //How much time elapses between values in X (arbitrary unit, but unit choice also affects other priors)
+  real<lower=0> minerr; //Minimal error
+  matrix<lower=0>[p,m] F; // F used as input
+}
+
+transformed data {
+  vector[n*m] Xv = to_vector(X);
+  vector[n*m] sigmav = to_vector(sigma);
+}
+
+parameters {
+  matrix<lower=0>[n,p] G; // score matrix
+  // simplex[m] F[p]; // loadings simplex
+  vector<lower=0>[p] alpha_a; // Posterior a
+  vector<lower=minerr>[p] alpha_b; // Posterior b
+}
+
+model {
+
+  // The priors for G and F are implicitly given in the parameters section,
+  //  so explicitly stating them here would only lead to unnecessary calculations
+  //  (uniform priors become additive constants (in logspace), that can be ignored).
+  
+  // Column-wise autocorrelation
+  for(j in 1:p) {
+    G[1,j] ~ normal(0,100); // the first time point regularised
+    G[2:,j] ~ normal(G[:(n-1),j], alpha_a[j]*timesteps + alpha_b[j]); // gaussian
+  }
+
+  // X ~ Z = G * F
+  Xv ~ normal(to_vector(G*F), sigmav);
+
+}
+
+
 ```
-```{r}
 
+We then sample the model
+
+```{r, results="hide"}
+file = "../models/bamf_gauss.stan"
+
+mod_f <- cmdstan_model(file)
 data_list <- list(n=N, m=M , p=P, X=X_, sigma=E_, timesteps=t, minerr=
-    min((E_)) / 10, F=F_sparse
+    min((E_)) / 10, F=F_
 )
-```
-
-```{r}
-fit <- mod$sample(
+fit_bamf_gauss_f <- mod_f$sample(
   data = data_list, 
   seed = 123, 
   chains = 4, 
@@ -168,46 +548,178 @@ fit <- mod$sample(
 ```
 
 ```{r}
-
-draws <- fit$draws(format="df")
+quick_diagnostic_plots_with_F(fit_bamf_gauss_f)
 ```
 
-```{r}
-library(tidyverse)
-G_1 <- as_tibble(draws) %>% select( matches('G\\[\\d+,1'))
-G_2 <- as_tibble(draws) %>% select( matches('G\\[\\d+,2'))
-G_3 <- as_tibble(draws) %>% select( matches('G\\[\\d+,3'))
+### Conclussions
+
+Tha Cauchy is not necessary to capture the dynamics (at least assuming completely observed data)
+
+## BAMF with restricted G: bamf_restrictedG
+
+Jimeng suggests adding a constraint on the sum over G matrix
+
+```{stan}
+functions {
+  matrix vector_array_to_matrix(vector[] x) {
+    matrix[size(x), rows(x[1])] y;
+    for (m in 1:size(x))
+      y[m] = x[m]';
+    return y;
+  }
+  
+  # limit the G value by the sum of X matrix on row, the total concentration of every measured chemical 
+  # should be larger than the G value at time point t. 
+  matrix get_g_max(matrix x,int n,int p) {
+    matrix[n,p] y;
+    for (i in 1:n)
+      for (j in 1:p)
+        y[i][j] = sum(x[i])*2;
+    return y;
+  }
+  
+}
+
+
+data {
+  int<lower=1> n;     // number of data points
+  int<lower=1> m;     // number of dimensions
+  int<lower=1> p;     // number of components
+  matrix[n,m] X;      // data matrix
+  matrix<lower=0>[n,m] sigma;  // separate sigma for each of the observations (!)
+  vector<lower=0>[n-1] timesteps; //How much time elapses between values in X (arbitrary unit, but unit choice also affects other priors)
+  real<lower=0> minerr; //Minimal error
+  
+}
+
+transformed data {
+  vector[n*m] Xv = to_vector(X);
+  vector[n*m] sigmav = to_vector(sigma);
+  matrix[n,p] G_max = get_g_max(X,n,p);
+}
+
+parameters {
+  matrix<lower=0,upper=1>[n,p] G_raw; // raw score matrix
+  simplex[m] F[p]; // loadings simplex
+  vector<lower=0>[p] alpha_a; // Posterior a
+  vector<lower=minerr>[p] alpha_b; // Posterior b
+
+}
+
+transformed parameters {
+  matrix[n,p] G = (G_max) .* G_raw; // limited score matrix
+}
+
+model {
+
+  // The priors for G and F are implicitly given in the parameters section,
+  //  so explicitly stating them here would only lead to unnecessary calculations
+  //  (uniform priors become additive constants (in logspace), that can be ignored).
+  
+  // Column-wise autocorrelation
+  for(j in 1:p) {
+    // G[2:,j] ~ cauchy(G[:(n-1),j], alpha_a[j]*timesteps + alpha_b[j]);
+    target += cauchy_lpdf(G[2:,j] | G[:(n-1),j], alpha_a[j]*timesteps + alpha_b[j]);
+  }
+
+  // X ~ Z = G * F
+  // Xv ~ normal(to_vector(G*vector_array_to_matrix(F)), sigmav);
+  target += normal_lpdf(Xv | to_vector(G*vector_array_to_matrix(F)), sigmav);
+
+}
+
 ```
 
-```{r}
-G1_mean <- G_1 %>% colMeans()
-plot(G_[,1],G1_mean)
+We will use Jimeng proposal of a restricted G matrix
 
-```
+```{r, results="hide"}
+file = "../models/bamf_restrictedG.stan"
 
-
-```{r}
-plot(G_[,2],G_[,3])
-```
-
-## Sparsifying the simplex using the concentration parameter.
-
-```{r}
-alpha = 0.01
+mod_f <- cmdstan_model(file)
 data_list <- list(n=N, m=M , p=P, X=X_, sigma=E_, timesteps=t, minerr=
-    min((E_)) / 10, concentration= alpha*(rep(1,M))
+    min((E_)) / 10
 )
+fit_bamf_restricted <- mod_f$sample(
+  data = data_list, 
+  seed = 123, 
+  chains = 4, 
+  parallel_chains = 4,
+  refresh = 500 # print update every 500 iters
+)
+```
 
+```{r}
+quick_diagnostic_plots(fit_bamf_restricted)
+```
+
+## BAMF with sparsity constraints in the F matrix
+
+We enforce some sparsity constraints by ways of the Dirichlet matrix (technically we use a Symmetric sparse Dirichlet prior)
+
+```{stan}
+
+functions {
+  matrix vector_array_to_matrix(vector[] x) {
+    matrix[size(x), rows(x[1])] y;
+    for (m in 1:size(x))
+      y[m] = x[m]';
+    return y;
+  }
+}
+
+data {
+  int<lower=1> n;     // number of data points
+  int<lower=1> m;     // number of dimensions
+  int<lower=1> p;     // number of components
+  matrix[n,m] X;      // data matrix
+  matrix<lower=0>[n,m] sigma;  // separate sigma for each of the observations (!)
+  vector<lower=0>[n-1] timesteps; //How much time elapses between values in X (arbitrary unit, but unit choice also affects other priors)
+  real<lower=0> minerr; //Minimal error
+  vector[m] concentration;
+}
+
+transformed data {
+  vector[n*m] Xv = to_vector(X);
+  vector[n*m] sigmav = to_vector(sigma);
+  
+}
+
+parameters {
+  matrix<lower=0>[n,p] G; // score matrix
+  simplex[m] F[p]; // loadings simplex
+  vector<lower=0>[p] alpha_a; // Posterior a
+  vector<lower=minerr>[p] alpha_b; // Posterior b
+}
+
+model {
+
+  // The priors for G and F are implicitly given in the parameters section,
+  //  so explicitly stating them here would only lead to unnecessary calculations
+  //  (uniform priors become additive constants (in logspace), that can be ignored).
+  
+  // Column-wise autocorrelation
+  for(j in 1:p) {
+    F[j] ~ dirichlet(concentration); // sparsity induced by small concent.
+    G[1,j] ~ normal(0,100);
+    G[2:,j] ~ cauchy(G[:(n-1),j], alpha_a[j]*timesteps + alpha_b[j]);
+  }
+
+  // X ~ Z = G * F
+  Xv ~ normal(to_vector(G*vector_array_to_matrix(F)), sigmav);
+
+}
 
 ```
 
+We sample with 0.1 concentration parameter
 
-```{r}
+```{r, results="hide"}
 file = "../models/bamf_sparse.stan"
 
-mod <- cmdstan_model(file)
-
-fit <- mod$sample(
+mod_f <- cmdstan_model(file)
+data_list <- list(n=N, m=M , p=P, X=X_, sigma=E_, timesteps=t, minerr=
+    min((E_)) / 10, concentration = 0.01*rep(1,M))
+fit_bamf_sparse <- mod_f$sample(
   data = data_list, 
   seed = 123, 
   chains = 4, 
@@ -217,35 +729,119 @@ fit <- mod$sample(
 ```
 
 ```{r}
+quick_diagnostic_plots(fit_bamf_sparse)
+```
 
-library(posterior)
-fit$diagnostic_summary()
+# Using MAP as init
+
+## Original BAMF
+
+We examine the quality of the MAP solution for the original model
+
+```{r,results="hide"}
+file = "../models/bamf.stan"
+
+mod_f <- cmdstan_model(file)
+data_list <- list(n=N, m=M , p=P, X=X_, sigma=E_, timesteps=t, minerr=
+    min((E_)) / 10, concentration = 0.01*rep(1,M))
+fit_bamf_map <- mod_f$optimize(
+  data = data_list, 
+  seed = 123,
+  iter = 4000
+)
+
 ```
 
 ```{r}
-fit$cmdstan_diagnose()
+quick_diagnostic_plots_MAP(fit_bamf_map)
+```
+
+## BAMF with gaussians
+
+The same, we examine the MAP results for Gaussians with unknown F
+
+```{r, results="hide"}
+file = "../models/bamf_gauss_noF.stan"
+
+mod_f <- cmdstan_model(file)
+data_list <- list(n=N, m=M , p=P, X=X_, sigma=E_, timesteps=t, minerr=
+    min((E_)) / 10, concentration = 0.01*rep(1,M))
+fit_bamf_gauss_noF_map <- mod_f$optimize(
+  data = data_list, 
+  seed = 123,
+  iter = 4000
+)
+```
+
+```{r}
+quick_diagnostic_plots_MAP(fit_bamf_gauss_noF_map)
+```
+
+# Let's use the varimax rotations as init
+
+The MAP solutions do not seem very promising as init, we could use the latent G inferred by Varimax, but as the plot shown, they are in a different scale than the original G.
+
+Instead I will map the inferred F by Varimax into a simplex by softmax transform, and use it to init F
+
+```{r}
+F_init = as.matrix(fa$Y)
+F_init = apply(F_init,MARGIN =2, function(x){exp(x)/sum(exp(x))})
+F_init = t(F_init)
+
+inits_chain1 <- list(F=F_init )
+inits_chain2 <- list(F=F_init )
+inits_chain3 <- list(F=F_init )
+inits_chain4 <- list(F=F_init )
+
+corrplot(cor(t(F_),t(F_init)))
+```
+
+We see that the varimax simplex is not perfectly aligned with the original F simplex, still we will see how it behaves as starting point.
+
+```{r}
+inits_list = list(inits_chain1,inits_chain2,inits_chain3,inits_chain4)
+fit_bamf_init <- mod_f$sample(
+  data = data_list, 
+  seed = 123, 
+  chains = 4, 
+  parallel_chains = 4,
+  refresh = 500, # print update every 500 iters
+  init=inits_list
+)
 
 ```
 
 ```{r}
+quick_diagnostic_plots(fit_bamf_init)
 
-draws <- fit$draws(format="df")
 ```
 
-
-```{r}
-library(tidyverse)
-G_1 <- as_tibble(draws) %>% select( matches('G\\[\\d+,1'))
-G_2 <- as_tibble(draws) %>% select( matches('G\\[\\d+,2'))
-G_3 <- as_tibble(draws) %>% select( matches('G\\[\\d+,3'))
-```
+# Let's use the varimax rotations as F
 
 ```{r}
-G1_mean <- G_1 %>% colMeans()
-plot(G_[,1],G1_mean)
-G_data <- data.frame(G_real=G_[,1], G_predicted=G1_mean)
-summary(lm(G_real ~ G_predicted, G_data))
+file = "../models/bamf_gauss.stan"
+
+mod_f <- cmdstan_model(file)
+data_list <- list(n=N, m=M , p=P, X=X_, sigma=E_, timesteps=t, minerr=
+    min((E_)) / 10, F=F_init
+)
+fit_bamf_gauss_f <- mod_f$sample(
+  data = data_list, 
+  seed = 123, 
+  chains = 4, 
+  parallel_chains = 4,
+  refresh = 500 # print update every 500 iters
+)
 ```
+
 ```{r}
-bayesplot::pp_check(object = fit)
+quick_diagnostic_plots_with_F(fit_bamf_gauss_f)
 ```
+
+# Conclusions
+
+-   The Cauchy prior may not be necessary to infer the time patterns.
+
+-   There are identifiability issues. Seems like the label switching issue in mixture models, Two columns of G are sampling the same latent variable leaving one unidentified.
+
+-   Probably a prior that disambiguates the columns of the simplex or the time profiles could alleviate this.
