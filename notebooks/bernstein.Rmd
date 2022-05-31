@@ -1,0 +1,273 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+
+
+```{r}
+library(tidyr)
+
+G_ = read.csv(file = "../data/example_data_G.csv",header=TRUE)
+F_ = read.csv(file = "../data/example_data_F.csv",header=TRUE)
+E_ = read.csv(file = "../data/example_data_E.csv", header=TRUE)
+X_ = read.csv(file = "../data/example_data_X.csv", header=TRUE)
+
+N <- nrow(G_[,-1])
+M <- ncol(X_[,-1])
+P <- ncol(G_[,-1])
+t <- G_[,1]
+t <- (t - t[1])/(1e9)/3600
+#t<- diff(t)
+X_ <- X_[,-1]
+E_ <- E_[,-1]
+F_ <- F_[,-1]
+G_ <- G_[,-1]
+F_ <- apply(F_, MARGIN=2, FUN = as.numeric)
+par(mfrow=c(2,3))
+plot(G_[,1], type="l")
+plot(G_[,2], type="l")
+plot(G_[,3], type="l")
+plot(F_[1,], type="l")
+plot(F_[2,], type="l")
+plot(F_[3,], type="l")
+```
+
+
+```{r}
+source("../R/bernstein.R")
+```
+
+```{r}
+O <- 168
+t <- (t - min(t))/(max(t)- min(t))
+B <- t(bernstein.matrix(O,t,a=0,b=1))
+D <- t(bernstein.derivative.operator(O))
+concentration <- 0.0001* rep(1,M)
+```
+
+```{r}
+library(cmdstanr)
+set_cmdstan_path("~/cmdstan")
+file = "../models/curve_analysis.stan"
+
+mod <- cmdstan_model(file)
+
+
+```
+
+```{r}
+data_list <- list(N=N, M=M , P=P, Xv=X_, sigma=E_, timesteps=t, minerr=
+    min((E_)) / 10, O = O, B= B, D=D, T =length(t), MAX=100, concentration=concentration, F=F_)
+fit_bamf <- mod$sample(
+  data = data_list, 
+  seed = 123, 
+  chains = 4, 
+  parallel_chains = 4,
+  refresh = 500 # print update every 500 iters
+)
+```
+
+
+```{r,max.height='100px'}
+library(posterior)
+fit_bamf$diagnostic_summary()
+```
+```{r}
+library(bayesplot)
+fit_bamf$cmdstan_diagnose()
+```
+
+```{r}
+library(tidyverse)
+library(corrplot)
+quick_diagnostic_plots <- function(stan_fit){
+  stan_fit$diagnostic_summary()
+  stan_fit$cmdstan_diagnose()
+  mcmc_rhat(rhat(fit_bamf))
+  mcmc_neff(neff_ratio(fit_bamf))
+  draws <- stan_fit$draws(format="df")
+  G_1 <- as_tibble(draws) %>% select( matches('^G\\[\\d+,1'))
+  G_2 <- as_tibble(draws) %>% select( matches('^G\\[\\d+,2'))
+  G_3 <- as_tibble(draws) %>% select( matches('^G\\[\\d+,3'))
+  DG_1 <- as_tibble(draws) %>% select( matches('^DG\\[\\d+,1'))
+  DG_2 <- as_tibble(draws) %>% select( matches('^DG\\[\\d+,2'))
+  DG_3 <- as_tibble(draws) %>% select( matches('^DG\\[\\d+,3'))
+  F_1 <- as_tibble(draws) %>% select( matches('^F\\[1,\\d'))
+  F_2 <- as_tibble(draws) %>% select( matches('^F\\[2,\\d'))
+  F_3 <- as_tibble(draws) %>% select( matches('^F\\[3,\\d'))
+  A_1 <- as_tibble(draws) %>% select( matches('^A\\[\\d+,1'))
+  A_2 <- as_tibble(draws) %>% select( matches('^A\\[\\d+,2'))
+  A_3 <- as_tibble(draws) %>% select( matches('^A\\[\\d+,3'))
+  G1_mean <- G_1 %>% colMeans()
+  G2_mean <- G_2 %>% colMeans()
+  G3_mean <- G_3 %>% colMeans()
+  DG1_mean <- DG_1 %>% colMeans()
+  DG2_mean <- DG_2 %>% colMeans()
+  DG3_mean <- DG_3 %>% colMeans()
+  A1_mean <- A_1 %>% colMeans()
+  A2_mean <- A_2 %>% colMeans()
+  A3_mean <- A_3 %>% colMeans()
+  F1_mean <- F_1 %>% colMeans()
+  F2_mean <- F_2 %>% colMeans()
+  F3_mean <- F_3 %>% colMeans()
+  G1_sd <- G_1 %>% as.matrix() %>% matrixStats::colSds()
+  G2_sd <- G_2 %>% as.matrix() %>% matrixStats::colSds()
+  G3_sd <- G_3 %>% as.matrix() %>% matrixStats::colSds()
+  F1_sd <- F_1 %>% as.matrix() %>% matrixStats::colSds()
+  F2_sd <- F_2 %>% as.matrix() %>% matrixStats::colSds()
+  F3_sd <- F_3 %>% as.matrix() %>% matrixStats::colSds()
+  par(mfrow=c(2,3)) 
+  plot(G1_mean, type ="l")
+  plot(G2_mean, type ="l")
+  plot(G3_mean, type ="l")
+  plot(F1_mean, type ="l")
+  plot(F2_mean, type ="l")
+  plot(F3_mean, type ="l")
+  dev.off()
+  par(mfrow=c(2,3)) 
+  plot(A1_mean, type ="l")
+  plot(A2_mean, type ="l")
+  plot(A3_mean, type ="l")
+  plot(DG1_mean, type ="l")
+  plot(DG2_mean, type ="l")
+  plot(DG3_mean, type ="l")
+  dev.off()
+  corrplot(cor(cbind(G1_mean,G2_mean,G3_mean),G_))
+  dev.off()
+  par(mfrow=c(2,3))
+  plot(G_[,1],G1_mean)
+  plot(G_[,2],G2_mean)
+  plot(G_[,3],G3_mean)
+  plot(F_[1,],F1_mean)
+  plot(F_[2,],F2_mean)
+  plot(F_[3,],F3_mean)
+  dev.off()
+  par(mfrow=c(2,3))
+  plot((G_[,1]-G1_mean)/G1_sd)
+  abline(h=2)
+  abline(h=-2)
+  plot((G_[,2]-G2_mean)/G2_sd)
+  abline(h=2)
+  abline(h=-2)
+  plot((G_[,3]-G3_mean)/G3_sd)
+  abline(h=2)
+  abline(h=-2)
+  plot((F_[1,]-F1_mean)/F1_sd)
+  abline(h=2)
+  abline(h=-2)
+  plot((F_[2,]-F2_mean)/F2_sd)
+  abline(h=2)
+  abline(h=-2)
+  plot((F_[3,]-F3_mean)/F3_sd)
+  abline(h=2)
+  abline(h=-2)
+  dev.off()
+  lst(G1_mean, G2_mean, G3_mean, F1_mean, F2_mean, F3_mean)
+}
+
+
+
+quick_diagnostic_plots_with_F <- function(stan_fit){
+    stan_fit$diagnostic_summary()
+  stan_fit$cmdstan_diagnose()
+  mcmc_rhat(rhat(fit_bamf))
+  mcmc_neff(neff_ratio(fit_bamf))
+  draws <- stan_fit$draws(format="df")
+  G_1 <- as_tibble(draws) %>% select( matches('^G\\[\\d+,1'))
+  G_2 <- as_tibble(draws) %>% select( matches('^G\\[\\d+,2'))
+  G_3 <- as_tibble(draws) %>% select( matches('^G\\[\\d+,3'))
+  DG_1 <- as_tibble(draws) %>% select( matches('^DG\\[\\d+,1'))
+  DG_2 <- as_tibble(draws) %>% select( matches('^DG\\[\\d+,2'))
+  DG_3 <- as_tibble(draws) %>% select( matches('^DG\\[\\d+,3'))
+  A_1 <- as_tibble(draws) %>% select( matches('^A\\[\\d+,1'))
+  A_2 <- as_tibble(draws) %>% select( matches('^A\\[\\d+,2'))
+  A_3 <- as_tibble(draws) %>% select( matches('^A\\[\\d+,3'))
+  G1_mean <- G_1 %>% colMeans()
+  G2_mean <- G_2 %>% colMeans()
+  G3_mean <- G_3 %>% colMeans()
+  DG1_mean <- DG_1 %>% colMeans()
+  DG2_mean <- DG_2 %>% colMeans()
+  DG3_mean <- DG_3 %>% colMeans()
+  A1_mean <- A_1 %>% colMeans()
+  A2_mean <- A_2 %>% colMeans()
+  A3_mean <- A_3 %>% colMeans()
+
+  G1_sd <- G_1 %>% as.matrix() %>% matrixStats::colSds()
+  G2_sd <- G_2 %>% as.matrix() %>% matrixStats::colSds()
+  G3_sd <- G_3 %>% as.matrix() %>% matrixStats::colSds()
+  par(mfrow=c(2,3)) 
+  plot(G1_mean, type ="l")
+  plot(G2_mean, type ="l")
+  plot(G3_mean, type ="l")
+  
+  dev.off()
+  par(mfrow=c(2,3)) 
+  plot(A1_mean, type ="l")
+  plot(A2_mean, type ="l")
+  plot(A3_mean, type ="l")
+  plot(DG1_mean, type ="l")
+  plot(DG2_mean, type ="l")
+  plot(DG3_mean, type ="l")
+  dev.off()
+  corrplot(cor(cbind(G1_mean,G2_mean,G3_mean),G_))
+  dev.off()
+  par(mfrow=c(2,3))
+  plot(G_[,1],G1_mean)
+  plot(G_[,2],G2_mean)
+  plot(G_[,3],G3_mean)
+  dev.off()
+  par(mfrow=c(2,3))
+  plot((G_[,1]-G1_mean)/G1_sd)
+  abline(h=2)
+  abline(h=-2)
+  plot((G_[,2]-G2_mean)/G2_sd)
+  abline(h=2)
+  abline(h=-2)
+  plot((G_[,3]-G3_mean)/G3_sd)
+  abline(h=2)
+  abline(h=-2)
+  dev.off()
+  
+}
+
+
+quick_diagnostic_plots_MAP<- function(stan_fit){
+  draws <- stan_fit$draws(format="df")
+  G_1 <- as_tibble(draws) %>% select( matches('G\\[\\d+,1'))
+  G_2 <- as_tibble(draws) %>% select( matches('G\\[\\d+,2'))
+  G_3 <- as_tibble(draws) %>% select( matches('G\\[\\d+,3'))
+  F_1 <- as_tibble(draws) %>% select( matches('F\\[1,\\d'))
+  F_2 <- as_tibble(draws) %>% select( matches('F\\[2,\\d'))
+  F_3 <- as_tibble(draws) %>% select( matches('F\\[3,\\d'))
+  G1_mean <- G_1 %>% as.matrix()
+  G2_mean <- G_2 %>% as.matrix()
+  G3_mean <- G_3%>% as.matrix()
+   F1_mean <- F_1%>% as.matrix()
+  F2_mean <- F_2 %>% as.matrix()
+  F3_mean <- F_3 %>% as.matrix()
+  par(mfrow=c(2,3)) 
+  plot(t(G1_mean),type="l")
+  plot(t(G2_mean),type="l")
+  plot(t(G3_mean),type="l")
+  plot(t(F1_mean),type="l")
+  plot(t(F2_mean),type="l")
+  plot(t(F3_mean),type="l")
+  dev.off()
+  corrplot(cor(cbind(t(G1_mean),t(G2_mean),t(G3_mean)),G_))
+  dev.off()
+  par(mfrow=c(2,3))
+  plot(G_[,1],t(G1_mean))
+  plot(G_[,2],t(G2_mean))
+  plot(G_[,3],t(G3_mean))
+  plot(F_[1,],t(F1_mean))
+  plot(F_[2,],t(F2_mean))
+  plot(F_[3,],t(F3_mean))
+  dev.off()
+  lst(G1_mean, G2_mean, G3_mean, F1_mean, F2_mean, F3_mean)
+}
+
+quick_diagnostic_plots_with_F(fit_bamf)
+```
+```
+
