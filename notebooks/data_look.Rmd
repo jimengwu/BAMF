@@ -5,7 +5,7 @@ output: html_notebook
 
 ```{r}
 library(tidyr)
-setwd("~/git/BAMF/notebooks")
+#setwd("~/git/BAMF/notebooks")
 G_ = read.csv(file = "../data/example_data_G.csv",header=TRUE)
 F_ = read.csv(file = "../data/example_data_F.csv",header=TRUE)
 E_ = read.csv(file = "../data/example_data_E.csv", header=TRUE)
@@ -16,9 +16,9 @@ X_ = read.csv(file = "../data/example_data_X.csv", header=TRUE)
 
 ```{r}
 library(cmdstanr)
-set_cmdstan_path("~/cmdstan")
+#set_cmdstan_path("~/cmdstan")
 file = "../models/bamf.stan"
-mod <- cmdstan_model(file,compile = FALSE)
+mod <- cmdstan_model(file,compile = TRUE)
 N <- nrow(G_[,-1])
 M <- ncol(X_[,-1])
 P <- ncol(G_[,-1])
@@ -33,8 +33,10 @@ data_list <- list(n=N, m=M , p=P, X=X_, sigma=E_, timesteps=t, minerr=
 ```
 
 ```{r}
-mod$.__enclos_env__$private$hpp_file_ <- "/Users/Daniel/git/BAMF/models/bamf.hpp"
-mod$.__enclos_env__$private$exe_file_ <- "/Users/Daniel/git/BAMF/models/bamf"
+mod$.__enclos_env__$private$hpp_file_ <- "D:/git/BAMF/models/bamf.hpp"
+mod$.__enclos_env__$private$exe_file_ <- "D:/git/BAMF/models/bamf"
+
+
 fit <- mod$sample(
   data = data_list, 
   seed = 123, 
@@ -65,3 +67,6 @@ mcmc_neff(neff_ratio(fit))
 which.max(neff_ratio(fit))
 ```
 
+```{r}
+neff_ratio(fit)
+```
