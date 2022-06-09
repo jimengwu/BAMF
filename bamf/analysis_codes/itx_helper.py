@@ -3,11 +3,11 @@ import numpy as np
 
 
 def igor_time_convert(t):
-    #     t_ls = np.array(t_ls).reshape(-1)
+
     return np.timedelta64(int(t), "s") + np.datetime64("1904-01-01")
 
 
-def remove_mz(mz2remove, array, amus_nb):
+def remove_mz(array, amus_nb, mz2remove=[16, 17, 18, 19, 20, 28]):
     ls = []
 
     for i in mz2remove:
