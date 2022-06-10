@@ -39,14 +39,12 @@ source("../R/bernstein.R")
 ```
 
 ```{r}
-O <- 168
+O <- 85
 t <- (t - min(t))/(max(t)- min(t))
 B <- t(bernstein.matrix(O,t,a=0,b=1))
 D <- t(bernstein.derivative.operator(O))
-concentration <- 0.0001* rep(1,M)
-```
+concentration <- 10* rep(1,M)
 
-```{r}
 library(cmdstanr)
 set_cmdstan_path("~/cmdstan")
 file = "../models/curve_analysis.stan"
@@ -54,14 +52,11 @@ file = "../models/curve_analysis.stan"
 mod <- cmdstan_model(file)
 
 
-```
-
-```{r}
 data_list <- list(N=N, M=M , P=P, Xv=X_, sigma=E_, timesteps=t, minerr=
     min((E_)) / 10, O = O, B= B, D=D, T =length(t), MAX=100, concentration=concentration, F=F_)
 fit_bamf <- mod$sample(
   data = data_list, 
-  seed = 123, 
+  #seed = 123, 
   chains = 4, 
   parallel_chains = 4,
   refresh = 500 # print update every 500 iters
@@ -135,6 +130,7 @@ quick_diagnostic_plots <- function(stan_fit){
   dev.off()
   corrplot(cor(cbind(G1_mean,G2_mean,G3_mean),G_))
   dev.off()
+ 
   par(mfrow=c(2,3))
   plot(G_[,1],G1_mean)
   plot(G_[,2],G2_mean)
@@ -256,6 +252,8 @@ quick_diagnostic_plots_MAP<- function(stan_fit){
   dev.off()
   corrplot(cor(cbind(t(G1_mean),t(G2_mean),t(G3_mean)),G_))
   dev.off()
+  corrplot(cor(cbind(t(G1_mean),t(G2_mean),t(G3_mean))))
+  dev.off()
   par(mfrow=c(2,3))
   plot(G_[,1],t(G1_mean))
   plot(G_[,2],t(G2_mean))
@@ -267,7 +265,7 @@ quick_diagnostic_plots_MAP<- function(stan_fit){
   lst(G1_mean, G2_mean, G3_mean, F1_mean, F2_mean, F3_mean)
 }
 
-quick_diagnostic_plots_with_F(fit_bamf)
+diagnostics <- quick_diagnostic_plots(fit_bamf)
 ```
 ```
 

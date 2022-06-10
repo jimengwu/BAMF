@@ -641,6 +641,30 @@ fit_bamf_ar1 <- mod_f$sample(
 quick_diagnostic_plots(fit_bamf_ar1)
 ```
 
+## AR-1 model with ordered variance
+```{r,results='hide', message=F, echo=F,warning=F,  cache=F}
+file = "../models/ordered_bamf_AR1_no_F.stan"
+
+mod_f <- cmdstan_model(file)
+data_list <- list(n=N, m=M , p=P, X=X_, sigma=E_, timesteps=t, minerr=
+    min((E_)) / 10, F=F_, concentration = 1*rep(1,M)
+)
+fit_bamf_ar1 <- mod_f$sample(
+  data = data_list, 
+  seed = 123, 
+  chains = 4, 
+  parallel_chains = 4,
+  refresh = 0 # print update every 500 iters
+)
+```
+
+```{r}
+quick_diagnostic_plots(fit_bamf_ar1)
+```
+
+
+
+
 ### Conclussions {data-background="slide_background.svg"}
 
 Tha Cauchy is not necessary to capture the dynamics (at least assuming completely observed data)

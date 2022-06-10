@@ -29,55 +29,50 @@ data {
   matrix[O,O] D; # Derivative operator
   matrix[T,M] Xv; #observations
   real<lower=0> MAX;
-   matrix[P,M] F;
+   //matrix[P,M] F;
    vector[M] concentration;
 }
 parameters {
  matrix<lower=0>[O,P] A;
- real<lower=0> sigma_a[P];
- real<lower=0> sigmaE[P];
- #simplex[M] F[P]; 
+ ordered[P] sigma_a;
+ ordered[P] sigmaE;
+ real alpha[P];
+ real beta[P];
+ simplex[M] F[P]; 
 #  real <lower=0> sigma;
- vector[P] tau;
- 
+ ordered[P] tau;
+ matrix[T,P] G;
+// cov_matrix[P] C;
+ real gamma[P];
 }
 transformed parameters{
     matrix[O,P] DG; 
-    matrix[T,P] G;
-    matrix[P,P] C;
+    matrix[O,P] AC;
+    
    
-    G = B*A;
     DG =  D * A ; 
+  //  AC = A * C;
   
   
-   // for( i in 1:P){
-  //    for(j in 1:P){
-  //      if(i==j)
-  //        C[i,j] = -exp(tau[i]);
-  //      else
-  //        C[i,j] = 0;
-        
-  //    }
-      
-  //  }
+   
     
 }
 
 model { 
   #sigmaE~ scaled_inv_chi_square(1000,1);
-
-  #target += normal_lpdf(to_vector(Xv) | to_vector(G* vector_array_to_matrix(F)), to_vector(sigma));
-  target += normal_lpdf(to_vector(Xv) | to_vector(G* F), to_vector(sigma));
- 
-  //for (i in 1:P)
-  //{
-   // target += normal_lpdf(to_vector(DG) | to_vector(A*C), sigmaE[i]);
-   # F[i] ~ dirichlet(concentration);
-   // A[1,i] ~ normal(0,10);
-    //for(j in 2:O){
-    //  A[j,i] ~ normal(A[j-1,i], sigma_a[i]);
-    //}
+  for( i in 1:P){
+    G[:,i] ~ normal(B*A[,i], exp(sigmaE[P]));
+    sigma_a[i] ~ normal(0, 10^i);
+    //target += normal_lpdf(DG[:,i] | AC[:,i] , exp(tau[i]) );
+  }
+  
+  // 
+  target += normal_lpdf(to_vector(Xv) | to_vector(G* vector_array_to_matrix(F)),  to_vector(sigma));
+  // sigmaE ~ normal(0,1);
+  for(j in 1:O){
       
-  //}
+      A[j,:] ~ normal(0, exp(sigma_a));
+  }
+  
  
 }
