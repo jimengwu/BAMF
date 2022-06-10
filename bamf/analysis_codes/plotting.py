@@ -17,7 +17,11 @@ sns.set_palette(sns.color_palette("colorblind"))
 
 def cal_metrics(data1, data2, metric):
     coeffs = []
-
+    try:
+        if len(data1.shape) == 1:
+            data1 = data1.reshape(1, -1)
+    except:
+        raise ("input data is empty.")
     for i in range(data1.shape[0]):
         coeff, _ = metric(
             data2,
@@ -59,12 +63,19 @@ def plot_F(data, extra_data=None):
     )
 
     for i, x in enumerate(axes):
-        if "reference_F" in data.keys():
-            if data["labels"][i] in data["reference_F"].index:
+        if "F_orig" in data.keys():
+            # if data["labels"][i] in data["F_orig"].index:
+            if data["labels"][i] in data["orig_labels"]:
+                orig_index = data["orig_labels"].index(data["labels"][i])
+
+                # x.plot(
+                #     data["times"], data["G_orig"][:, orig_index], "k--", label="Truth"
+                # )
 
                 x.bar(
                     data["columns"],
-                    data["reference_F"].loc[data["labels"][i], :],
+                    # data["F_orig"][data["labels"][i], :],
+                    data["F_orig"][orig_index, :],
                     width=0.5,
                     color="k",
                     alpha=0.6,
@@ -75,14 +86,15 @@ def plot_F(data, extra_data=None):
                 ####### TODO: only use the median G value to calculate the coeffcient########
                 # quants = np.quantile(data["F"][:, i, :].squeeze(), q=[0.5], axis=0)
                 # coeff, _ = spearmanr(
-                #     data["reference_F"].loc[data["labels"][i], :],
+                #     data["F_orig"][data["labels"][i], :],
                 #     quants,
                 #     axis=None,
                 # )
                 ####### only use the median G value to calculate the coeffcient########
                 coeffs = cal_metrics(
                     data["F"][:, i, :],
-                    data["reference_F"].loc[data["labels"][i], :],
+                    # data["F_orig"][data["labels"][i], :],
+                    data["F_orig"][orig_index, :],
                     pearsonr,
                 )
                 coeff_avg = np.mean(coeffs)
@@ -112,23 +124,27 @@ def plot_F(data, extra_data=None):
 
 
 def plot_individual_F(data, compound, title="F", benchmark=False):
+    """
+    generate the factor profile plot for one component using few samples.
+    """
 
-    fig, ax = plt.subplots(data["samples"], 1, sharex=True)
+    fig, axes = plt.subplots(data["samples"], 1, sharex=True)
 
     title = "F"
 
     if benchmark:
-        title = title + "," + data["orig_labels"][compound]
+        title = title + ", " + data["orig_labels"][compound]
     else:
         title = title + f", {compound}"
 
     colors = sns.color_palette()
 
-    for i, x in enumerate(ax):
+    for i, x in enumerate(axes):
+        sample = -i
 
         x.plot(
             data["columns"],
-            data["F"][i, compound, :],
+            data["F"][sample, compound, :],
             linestyle="",
             marker="o",
             color=colors[i],
@@ -137,16 +153,39 @@ def plot_individual_F(data, compound, title="F", benchmark=False):
         if benchmark:
             x.bar(
                 data["columns"],
-                data["reference_F"].iloc[compound, :],
+                data["F_orig"][compound, :],
                 width=0.5,
                 color="k",
                 alpha=0.25,
             )
 
+            coeffs = cal_metrics(
+                data["F"][sample, compound, :],
+                data["F_orig"][compound, :],
+                pearsonr,
+            )
+            coeff_avg = np.mean(coeffs)
+            coeff_std = np.std(coeffs)
+
+            twin = axes[i].twinx()
+            twin.set_ylabel(
+                "sample "
+                + str(i)
+                + "\nSpearman's ρ:"
+                + "{:.4f}".format(coeff_avg)
+                + "+/-"
+                + "{:.4f}".format(coeff_std),
+                labelpad=len("sample " + str(i)),
+                fontsize=18,
+                rotation="horizontal",
+                horizontalalignment="left",
+                wrap=True,
+            )
+
         x.set_xticks(data["columns"], minor=True)
 
         for tick in x.xaxis.get_major_ticks():
-            tick.label.set_fontsize(16)
+            tick.label.set_fontsize(18)
             tick.label.set_rotation(90)
 
     return fig
@@ -202,7 +241,7 @@ def plot_G(data, title="G", benchmark=False, quantiles=[0.25, 0.5, 0.75]):
 
 def plot_individual_G(data, title="G", benchmark=False):
 
-    fig, axes = plt.subplots(nrows=data["G"].shape[-1], sharex=True)
+    fig, axes = plt.subplots(nrows=data["p"], sharex=True)
 
     axes[0].set_title(title)
 
@@ -211,9 +250,10 @@ def plot_individual_G(data, title="G", benchmark=False):
     for i, x in enumerate(axes):
 
         for j in range(data["samples"]):
+            sample = -j
             x.plot(
                 data["times"],
-                data["G"][j, :, i],
+                data["G"][sample, :, i],
                 "x--",
                 color=colors[j],
                 alpha=0.5,
@@ -224,13 +264,22 @@ def plot_individual_G(data, title="G", benchmark=False):
             x.plot(data["times"], data["G_orig"][:, i], "k--", label="Truth")
 
         twin = axes[i].twinx()
-        twin.set_ylabel(data["labels"][i], labelpad=len(data["labels"][i]), rotation=90)
+        twin.set_ylabel(
+            data["labels"][i],
+            labelpad=len(data["labels"][i]),
+            # rotation=90,
+            fontsize=18,
+            rotation="horizontal",
+            horizontalalignment="left",
+            wrap=True,
+        )
         twin.get_yaxis().set_ticks([])
 
         x.set_ylim([0, x.get_ylim()[1]])
 
     for tick in x.xaxis.get_major_ticks():
-        tick.label.set_fontsize(16)
+        tick.label.set_fontsize(18)
+        tick.label.set_rotation(90)
 
     fig.autofmt_xdate()
 
@@ -295,14 +344,18 @@ def plot_median_G(data, title="G", benchmark=False, quantiles=[0.5]):
 
 def mass_conservation(data, sample=-1):
 
-    print(data["X"].dtype, data["X"].shape, flush=True)
-    data["X"].shape, data["G"].shape
     total_orig = data["X"].sum(axis=-1)
-    total = data["G"].sum(axis=-1)[sample, ...]
+    if isinstance(sample, int):
+        # total = data["G"].sum(axis=-1)[sample, ...]
+        total = data["G"][sample, :].sum(axis=-1)
+        title = "Mass conservation from last sample"
+    elif sample == "median":
+        total = np.median(data["G"], axis=0).sum(axis=-1)
+        title = "Mass conservation from median G value"
 
     fig, axes = plt.subplots(3, 1)
 
-    axes[0].set_title("Mass conservation from one sample")
+    axes[0].set_title(title)
 
     axes[0].scatter(total_orig, total, s=20)
     axes[1].scatter(total_orig, total / total_orig, s=20)
@@ -494,14 +547,14 @@ def F_xarray(data, title="F", benchmark=True):
     )
 
     for i, x in enumerate(ax):
-        # if "reference_F" in data.keys():
+        # if "F_orig" in data.keys():
         if benchmark:
             if data["component"][i].item() in data["original_component"]:
-                # if data["F"]["component"][i] in data["reference_F"].index:
+                # if data["F"]["component"][i] in data["F_orig"].index:
 
                 x.bar(
                     data["F"]["variable"],
-                    data["F_orig"].loc[components[i], :],
+                    data["F_orig"][components[i], :],
                     width=0.5,
                     color="k",
                     alpha=0.25,
