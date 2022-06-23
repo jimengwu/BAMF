@@ -25,20 +25,14 @@ transformed data {
 parameters {
   matrix<lower=0>[n,p] G; // score matrix
   simplex[m] F[p]; // loadings simplex
-  vector<lower=0>[p] alpha_a; // Posterior a
-  vector<lower=minerr>[p] alpha_b; // Posterior b
+  positive_ordered[p] alpha_a; // ordering constraints over alpha_a
+  positive_ordered[p] alpha_b; // ordering constraints over alpha_b
 }
 
 model {
-
-  // The priors for G and F are implicitly given in the parameters section,
-  //  so explicitly stating them here would only lead to unnecessary calculations
-  //  (uniform priors become additive constants (in logspace), that can be ignored).
-  
   // Column-wise autocorrelation
   for(j in 1:p) {
-    G[1,j] ~ normal(0,100);
-    G[2:,j] ~ normal(G[:(n-1),j], alpha_a[j]*timesteps + alpha_b[j]);
+    G[2:,j] ~ normal(G[:(n-1),j], alpha_a[j]*timesteps + alpha_b[j] );
   }
 
   // X ~ Z = G * F

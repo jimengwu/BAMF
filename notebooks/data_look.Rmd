@@ -8,6 +8,14 @@ output: revealjs::revealjs_presentation
     overflow-y: auto !important;
 }
 ```
+
+```{r setup, echo = F}
+library(tidyverse)
+library(cmdstanr)
+library(corrplot)
+
+```
+
 # DATA {data-background="slide_background.svg"}
 
 Here we load the small simulated data set. For this case $p=3$.
@@ -15,7 +23,6 @@ Here we load the small simulated data set. For this case $p=3$.
 We remove the first column of each matrix as it contains the indexes.
 
 ```{r data_load, echo=F, results='hide',  cache=F}
-library(tidyr)
 G_ = read.csv(file = "../data/example_data_G.csv",header=TRUE)
 F_ = read.csv(file = "../data/example_data_F.csv",header=TRUE)
 E_ = read.csv(file = "../data/example_data_E.csv", header=TRUE)
@@ -275,8 +282,8 @@ Let's define some functions to carry the above diagnostics
 quick_diagnostic_plots <- function(stan_fit){
   stan_fit$diagnostic_summary()
   stan_fit$cmdstan_diagnose()
-  mcmc_rhat(rhat(fit_bamf))
-  mcmc_neff(neff_ratio(fit_bamf))
+  #mcmc_rhat(rhat(stan_fit))
+  #mcmc_neff(neff_ratio(stan_fit))
   draws <- stan_fit$draws(format="df")
   G_1 <- as_tibble(draws) %>% select( matches('G\\[\\d+,1'))
   G_2 <- as_tibble(draws) %>% select( matches('G\\[\\d+,2'))
@@ -284,12 +291,12 @@ quick_diagnostic_plots <- function(stan_fit){
   F_1 <- as_tibble(draws) %>% select( matches('F\\[1,\\d'))
   F_2 <- as_tibble(draws) %>% select( matches('F\\[2,\\d'))
   F_3 <- as_tibble(draws) %>% select( matches('F\\[3,\\d'))
-  G1_mean <- G_1 %>% colMeans()
-  G2_mean <- G_2 %>% colMeans()
-  G3_mean <- G_3 %>% colMeans()
-  F1_mean <- F_1 %>% colMeans()
-  F2_mean <- F_2 %>% colMeans()
-  F3_mean <- F_3 %>% colMeans()
+  G1_mean <- G_1 %>% as.matrix() %>% matrixStats::colMedians()
+  G2_mean <- G_2 %>% as.matrix() %>% matrixStats::colMedians()
+  G3_mean <- G_3 %>% as.matrix() %>% matrixStats::colMedians()
+  F1_mean <- F_1 %>% as.matrix() %>% matrixStats::colMedians()
+  F2_mean <- F_2 %>% as.matrix() %>% matrixStats::colMedians()
+  F3_mean <- F_3 %>% as.matrix() %>% matrixStats::colMedians()
   G1_sd <- G_1 %>% as.matrix() %>% matrixStats::colSds()
   G2_sd <- G_2 %>% as.matrix() %>% matrixStats::colSds()
   G3_sd <- G_3 %>% as.matrix() %>% matrixStats::colSds()
@@ -885,13 +892,29 @@ data_list <- list(n=N, m=M , p=P, X=X_, sigma=E_, timesteps=t, minerr=
     min((E_)) / 10, concentration = 0.01*rep(1,M))
 fit_bamf_gauss_noF_map <- mod_f$optimize(
   data = data_list, 
-  seed = 123,
-  iter = 4000
+  iter = 1000000,
+  refresh=0
 )
 ```
 
 ```{r}
 quick_diagnostic_plots_MAP(fit_bamf_gauss_noF_map)
+```
+```{r}
+fit_bamf_gauss_noF_map <- mod_f$sample(
+  data = data_list, 
+  seed = 123, 
+  chains = 4, 
+  parallel_chains = 4,
+  refresh = 0 # print update every 500 iters
+)
+```
+
+
+```{r}
+library(bayesplot)
+source("../R/bamf_plot_utils.R")
+quick_diagnostic_plots(fit_bamf_gauss_noF_map)
 ```
 
 ## Let's use the varimax rotations as init {data-background="slide_background.svg"}
