@@ -39,11 +39,14 @@ source("../R/bernstein.R")
 ```
 
 ```{r}
-O <- 85
+O <- N
 t <- (t - min(t))/(max(t)- min(t))
 B <- t(bernstein.matrix(O,t,a=0,b=1))
 D <- t(bernstein.derivative.operator(O))
-concentration <- 10* rep(1,M)
+concentration <- 1* rep(1,M)
+C <- diag(N) -  (1/N)*matrix(data=rep(1,N*N), nrow=N, ncol = N) 
+S <- diag(apply(X_,MARGIN =2,FUN=sd))
+B <- mrbsizeR::dctMatrix(N)
 
 library(cmdstanr)
 set_cmdstan_path("~/cmdstan")
@@ -52,8 +55,8 @@ file = "../models/curve_analysis.stan"
 mod <- cmdstan_model(file)
 
 
-data_list <- list(N=N, M=M , P=P, Xv=X_, sigma=E_, timesteps=t, minerr=
-    min((E_)) / 10, O = O, B= B, D=D, T =length(t), MAX=100, concentration=concentration, F=F_)
+data_list <- list(N=N, M=M , P=P, Xv=scale(X_,center=T,scale = T), sigma=E_, timesteps=t, minerr=
+    min((E_)) / 10, O = O, B= B, D=D, T =length(t), MAX=100, concentration=concentration, F=F_, C=C, S=S)
 fit_bamf <- mod$sample(
   data = data_list, 
   #seed = 123, 
@@ -66,12 +69,33 @@ fit_bamf <- mod$sample(
 
 ```{r,max.height='100px'}
 library(posterior)
-fit_bamf$diagnostic_summary()
+stan_fit <- rstan::read_stan_csv(fit_bamf$output_files())
+temp = rstan::extract(stan_fit)
+length(temp$G[,1,1])
+```
+
+```{r}
+
+library(bayesplot)
+source("../R/bamf_plot_utils.R")
+plot_posterior_g(fit_bamf, scale(G_,scale = T),2,3)
+
 ```
 ```{r}
-library(bayesplot)
-fit_bamf$cmdstan_diagnose()
+source("../R/bamf_plot_utils.R")
+ppc_ribbon()
+plot_posterior_f(fit_bamf,F_,3)
 ```
+
+
+```{r}
+stan_fit <- rstan::read_stan_csv(fit_bamf$output_files())
+samples <-  rstan::extract(stan_fit)
+dim(samples$F[,3,])
+F_[3,]
+pp_check(as.array(F_[3,]),samples$F[,3,],ppc_ribbon)
+```
+
 
 ```{r}
 library(tidyverse)

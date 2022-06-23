@@ -170,6 +170,9 @@ fit_bamf <- mod$sample(
 ```{r, echo=FALSE, results='hide'}
 library(posterior)
 fit_bamf$diagnostic_summary()
+source("../R/bamf_plot_utils.R")
+plot_posterior_g(fit_bamf,G_,1,3)
+plot_posterior_f(fit_bamf,F_,2,2)
 ```
 
 ```{r, echo=FALSE, results='hide'}
