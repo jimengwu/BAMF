@@ -148,3 +148,145 @@ def check_rhat(fit, pars=None, verbose=True):
             )
 
     return rhat_ls
+
+def get_kept_samples( sim,  k,  n, samples):
+    """
+
+    Parameters
+    ----------
+    k : unsigned int
+        Chain index
+    n : unsigned int
+        Parameter index
+    """
+    
+    warmup2 = np.array(sim['warmup2'])
+
+    slst = sim['samples'][k]['chains']  # chain k, an OrderedDict
+    param_names = list(slst.keys())  # e.g., 'beta[1]', 'beta[2]', ...
+
+    nv = slst[param_names[n]]  # parameter n
+    samples=[]
+    for i in range(nv.shape[0] - warmup2[k]):
+        samples.append(nv[warmup2[k] + i])
+    return samples
+def split_potential_scale_reduction( sim,  n):
+    """
+    Return the split potential scale reduction (split R hat) for the
+    specified parameter.
+
+    Current implementation takes the minimum number of samples
+    across chains as the number of samples per chain.
+
+    Parameters
+    ----------
+    n : unsigned int
+        Parameter index
+
+    Returns
+    -------
+    rhat : float
+        Split R hat
+
+    """
+    n_chains = sim['chains']
+    ns_save = sim['n_save']
+    ns_warmup2 = sim['warmup2']
+    ns_kept = [s - w for s, w in zip(sim['n_save'], sim['warmup2'])]
+
+    n_samples = int(min(ns_kept))
+
+    if n_samples % 2 == 1:
+        n_samples = n_samples - 1
+    
+    split_chain_mean=[]
+    split_chain_var = []
+    samples=[]
+    split_chain = []
+    for chain in range(n_chains):
+        samples=[]
+        samples = get_kept_samples(sim, chain, n, samples)
+        split_chain=[]
+        for i in range(int(n_samples / 2)):
+            split_chain.append(samples[i])
+        split_chain_mean.append(np.mean(split_chain))
+        split_chain_var.append(np.var(split_chain,ddof=1))
+
+        split_chain=[]
+        for i in range(int(n_samples / 2), n_samples):
+            split_chain.append(samples[i])
+        split_chain_mean.append(np.mean(split_chain))
+        split_chain_var.append(np.var(split_chain,ddof=1))
+
+    var_between = n_samples / 2 * np.var(split_chain_mean)
+    var_within = np.mean(split_chain_var)
+
+    srhat = np.sqrt((var_between / var_within + n_samples / 2 -1) / (n_samples / 2))
+    return srhat
+
+
+def get_kept_samples2( data, idx1,idx2):
+    """
+
+    Parameters
+    ----------
+    k : unsigned int
+        Chain index
+    n : unsigned int
+        Parameter index
+    """
+#     print(data.shape,idx1,idx2)
+    return data[:,:,idx1,idx2]
+def split_potential_scale_reduction2(sim,data,n,idx1,idx2):
+    """
+    Return the split potential scale reduction (split R hat) for the
+    specified parameter.
+
+    Current implementation takes the minimum number of samples
+    across chains as the number of samples per chain.
+
+    Parameters
+    ----------
+    n : unsigned int
+        Parameter index
+
+    Returns
+    -------
+    rhat : float
+        Split R hat
+
+    """
+    n_chains = sim['chains']
+    ns_save = sim['n_save']
+    ns_warmup2 = sim['warmup2']
+    ns_kept = [s - w for s, w in zip(sim['n_save'], sim['warmup2'])]
+
+    n_samples = int(min(ns_kept))
+
+    if n_samples % 2 == 1:
+        n_samples = n_samples - 1
+    
+    split_chain_mean=[]
+    split_chain_var = []
+    samples=[]
+    split_chain = []
+    for chain in range(n_chains):
+        samples=[]
+        samples = get_kept_samples2(data, idx1,idx2)
+        split_chain=[]
+        for i in range(int(n_samples / 2)):
+            split_chain.append(samples[i])
+        split_chain_mean.append(np.mean(split_chain))
+        split_chain_var.append(np.var(split_chain,ddof=1))
+
+        split_chain=[]
+        for i in range(int(n_samples / 2), n_samples):
+            split_chain.append(samples[i])
+        split_chain_mean.append(np.mean(split_chain))
+        split_chain_var.append(np.var(split_chain,ddof=1))
+
+    var_between = n_samples / 2 * np.var(split_chain_mean)
+    var_within = np.mean(split_chain_var)
+
+    srhat = np.sqrt((var_between / var_within + n_samples / 2 -1) / (n_samples / 2))
+    return srhat

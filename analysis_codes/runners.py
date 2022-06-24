@@ -13,16 +13,17 @@ from contextlib import redirect_stderr, redirect_stdout
 import logging
 import sys
 import os
-
+import datetime
 from io import StringIO
-
+from sklearn.decomposition import NMF
 from . import helpers, analysis
 
 checked = set()
 
 killwait = 5
 
-class Silencer():
+
+class Silencer:
     """
     C++/Fortran subroutines don't care if you redirected via usual means
     This is to stop them from printing everything to stdout/stderr
@@ -32,7 +33,7 @@ class Silencer():
 
     def __init__(self, filepath):
 
-        self.f = filepath.open('w')
+        self.f = filepath.open("w")
         self.f_no = self.f.fileno()
 
         self.stdout_actual = os.dup(sys.stdout.fileno())
@@ -54,7 +55,8 @@ class Silencer():
 
         self.f.close()
 
-class Timer_pool():
+
+class Timer_pool:
 
     active_processes = {}
     start_times = {}
@@ -65,30 +67,54 @@ class Timer_pool():
 
     diagnostics = {"start", "stop", "duration", "filename", "status", "result", "seed"}
 
-    def __init__(self, nprocs=2, wait_n_times=2 , logfile=None):
+    def __init__(self, nprocs=2, wait_n_times=2, logfile=None):
+        """_summary_
+
+        Args:
+            nprocs (int, optional): _description_. Defaults to 2.
+            wait_n_times (int, optional): a int number, which multiplies the regular running time
+                                        is the maximum waiting time. Defaults to 2.
+            logfile (_type_, optional): _description_. Defaults to None.
+        """
 
         self.max_processes = nprocs
         self.n = wait_n_times
         self.logfile = logfile
 
     def execute(self, jobs, absolute_timeout=None, check_timeout=None):
+        """this function executes the assigned jobs
 
-        #Using pystans own thing would be much easier.
-        #But the optimization never converges for some starting points...
-        #and then you get no data even from the converged runs.
-        #(Well it will eventually exhaust the treedepth, but that is a long time to wait)
-        #So here we are.
+        Args:
+            jobs (_type_): the job list with defined parameters
+            absolute_timeout (_type_, optional): _description_. Defaults to None.
+            check_timeout (_type_, optional): _description_. Defaults to None.
+        """
 
-        #Note: None of the processes should return anything
+        # Using pystans own thing would be much easier.
+        # But the optimization never converges for some starting points...
+        # and then you get no data even from the converged runs.
+        # (Well it will eventually exhaust the treedepth, but that is a long time to wait)
+        # So here we are.
 
-        #Data used for bookkeeping
+        # Note: None of the processes should return anything
 
-        self.table = pd.DataFrame(j for i,j in jobs)
+        # Data used for bookkeeping
 
-        #compile all used models, once before multithreading
+        # table records job's parameters
+        self.table = pd.DataFrame(j for i, j in jobs)
+
+        # Compile all models that will be used later at once before multithreading
         for item in self.table["model"].unique():
             compile_model(Path(item))
-            premodels = self.table[np.logical_or(self.table["init"] == "model_init",self.table["init"] == "multimodel")]
+
+            premodels = self.table[
+                np.logical_or(
+                    self.table["init"] == "model_init",
+                    self.table["init"] == "multimodel",
+                )
+            ]
+
+            # compile the premodel
             if len(premodels) > 0:
                 for item in premodels["initoptions"]:
                     if type(item["premodel"]) is list:
@@ -98,30 +124,30 @@ class Timer_pool():
                         mod = item["premodel"]
                         compile_model(Path(mod))
 
-        self.table["function"] = [i.__name__ for i,j in jobs]
+        self.table["function"] = [i.__name__ for i, j in jobs]
         self.table["status"] = "undefined"
         self.table["start"] = pd.NaT
         self.table["stop"] = pd.NaT
         self.table["duration"] = np.nan
 
-        #Hmmm, maybe there is a pattern here.
+        # Hmmm, maybe there is a pattern here.
         if "initoptions" in self.table.columns:
-            self.table.loc[:,"initoptions"] = self.table["initoptions"].apply(str)
-
+            self.table.loc[:, "initoptions"] = self.table["initoptions"].apply(str)
         if "extract" in self.table.columns:
-            self.table.loc[:,"extract"] = self.table["extract"].apply(str)
-
-        #Path doesn't like to go quietly in to hdf5
+            self.table.loc[:, "extract"] = self.table["extract"].apply(str)
+        # Path doesn't like to go quietly in to hdf5
         if "filename" in self.table.columns:
-            self.table.loc[:,"filename"] = self.table["filename"].apply(str)
+            self.table.loc[:, "filename"] = self.table["filename"].apply(str)
 
-        self.groupers = [item for item in self.table.columns if item not in self.diagnostics]
+        self.groupers = [
+            item for item in self.table.columns if item not in self.diagnostics
+        ]
 
         self.selector = itemgetter(*self.groupers)
 
         self.absolute_limit = absolute_timeout
 
-        #list of function, keyword pairs
+        # list of function, keyword pairs
         for i, job in enumerate(jobs):
 
             self.running_id = i
@@ -131,15 +157,19 @@ class Timer_pool():
             while pipeline_full:
                 self.wait(check_timeout)
                 pipeline_full = len(self.active_processes) >= self.max_processes
-            
-            
+
             self.spawn(job)
 
         while len(self.active_processes) > 0:
             self.wait(check_timeout)
 
-
     def spawn(self, job):
+        """assign the job to one Process object, start the Process's activity
+        and record the Process id, starting time and status.
+
+        Args:
+            job (_type_): the function name and assigned parameters
+        """
 
         p = mp.Process(target=job[0], kwargs=job[1])
         p.start()
@@ -149,130 +179,181 @@ class Timer_pool():
         self.table.loc[self.running_id, "status"] = "started"
 
     def wait(self, timeout):
-        #Well waiting like this "wastes" a core but idk what to do about it
+        # Well waiting like this "wastes" a core but idk what to do about it
 
-        print(pd.Timestamp("now"), "running:", self.active_processes.keys())
+        print(pd.Timestamp("now"), "running:", self.active_processes.keys(), flush=True)
 
-        sentinels = [p.sentinel for k,p in self.active_processes.items()]
+        # get the sentinels of each active process, sentinel is a numeric handle of a system object
+        # which will become “ready” when the process ends.
+        sentinels = [p.sentinel for k, p in self.active_processes.items()]
 
+        # wait certain time to have some process finished. if exists, then get the id of the
+        # finished process; if nothing finished, then return empty list.
+        starttime = datetime.datetime.now()
+        print("start waiting connention for", timeout, "s :", starttime, flush=True)
         ready = connection.wait(sentinels, timeout=timeout)
+        stoptime = datetime.datetime.now()
+        print("finish waiting connention:", stoptime, flush=True)
+        # print("waited", stoptime - starttime, flush=True)
+        # changed: done = None
+        done = {}
 
-        done = None
-
-        #I don't get why they tell me they're ready, then complain.
-        #Sentinel reports ready, then close raises error.
-        #So that's why we wait few seconds to let the process get its business in order
+        # I don't get why they tell me they're ready, then complain.
+        # Sentinel reports ready, then close raises error.
+        # So that's why we wait few seconds to let the process get its business in order
         time.sleep(killwait)
 
-        if ready is not None:
-            done = {}
+        # if ready is not None:
+        if ready:  # changed
+            # done = {}
             for identifier, proc in self.active_processes.items():
-                    if proc.sentinel in ready:
-                        done[identifier] = proc.exitcode        
-                        proc.close()      
+                if proc.sentinel in ready:
+                    done[identifier] = proc.exitcode
+                    proc.close()
 
-        
         self.reap(done)
+        # ======================changed==========================
+        self.log(self.logfile)  # record the log into file
 
-        if self.logfile is not None:
-            self.log(self.logfile)
+    def log(self, filepath):
+        """save the log history
+
+        Args:
+            filepath (_type_): the file position to save the log
+        """
+        if (self.logfile is not None) & (self.table is not None):
+            self.table.to_hdf(filepath, key="runs")
+
+    # ======================changed==========================
+
+    # ======================================= old version==============
+    # record the log into file
+    # if self.logfile is not None:
+    #     self.log(self.logfile)
+
+    # def log(self, filepath):
+    #     if self.table is not None:
+    #         self.table.to_hdf(filepath, keys="runs")
+    # ======================================= old version==============
 
     def reap(self, done):
+        """stop the finished process
+
+        Args:
+            done (function): the status of current process
+        """
 
         now = pd.Timestamp("now")
 
+        # Remove those process that are done
         removed = []
-
-        #Remove those that are done
-        for tag,code in done.items():
-            self.table.loc[tag, "stop"] = now
+        for tag, code in done.items():
+            self.table.loc[tag, "stop"] = pd.Timestamp("now")
             if code != 0:
                 self.table.loc[tag, "status"] = str(code)
             else:
                 self.table.loc[tag, "status"] = "finished"
-                self.table.loc[tag, "duration"] = (now-self.table.loc[tag]["start"]).total_seconds()
+                self.table.loc[tag, "duration"] = (
+                    pd.Timestamp("now") - self.table.loc[tag]["start"]
+                ).total_seconds()
 
             removed.append(tag)
 
         for tag in removed:
             self.active_processes.pop(tag)
 
+        # ----------------below : kill he process which clogged the memory or spend too much time----------------
+        # kill and remove those that overstayed their welcome
         removed = []
-
-        #kill and remove those that overstayed their welcome
         for tag, proc in self.active_processes.items():
-            if (now - self.table.loc[tag]["start"]).total_seconds() >= self.absolute_limit:
+            if (
+                pd.Timestamp("now") - self.table.loc[tag, "start"]
+            ).total_seconds() >= self.absolute_limit:
                 proc.kill()
-                self.table.loc[tag, "stop"] = now
+                self.table.loc[tag, "stop"] = pd.Timestamp("now")
                 self.table.loc[tag, "status"] = "timeout"
                 removed.append(tag)
 
-        time.sleep(killwait)
+        # ---------------changed----------------
+        if removed != []:
+            # ---------------changed----------------
+            time.sleep(killwait)
 
         for tag in removed:
             self.active_processes[tag].close()
             self.active_processes.pop(tag)
 
         if len(self.active_processes) == 0:
-            return
+            return  # if no more process is running, then directly exit this deleting process function
+
+        # stuck chain detection, if double regular running time are used to run this process,
+        # then it is classifies as stucked.
 
         removed = []
-
-        #stuck chain detection
-
         means = self.table.groupby(self.groupers)["duration"].mean()
         for tag, proc in self.active_processes.items():
-            group = self.selector(self.table.loc[tag,:])
+            group = self.selector(self.table.loc[tag, :])
 
-            if ((self.n * means[group]) < (now - self.table.loc[tag]["start"]).total_seconds()):
+            if (self.n * means[group]) < (
+                pd.Timestamp("now") - self.table.loc[tag]["start"]
+            ).total_seconds():
                 proc.kill()
-                self.table.loc[tag, "stop"] = now
+                self.table.loc[tag, "stop"] = pd.Timestamp("now")
                 self.table.loc[tag, "status"] = "chain timeout"
                 removed.append(tag)
 
-        time.sleep(killwait)
+        # ---------------changed----------------
+        if removed != []:
+            # ---------------changed----------------
+            time.sleep(killwait)
 
         for tag in removed:
             self.active_processes[tag].close()
-            self.active_processes.pop(tag) 
+            self.active_processes.pop(tag)
 
         return
-
-    def log(self, filepath):
-        if self.table is not None:
-            self.table.to_hdf(filepath, "runs")
 
     def __enter__(self):
         return self
 
     def __exit__(self, type=None, value=None, traceback=None):
 
-        for tag,proc in self.active_processes.items():
+        for tag, proc in self.active_processes.items():
             proc.kill()
 
         time.sleep(killwait)
 
-        #Give a sec for kill to take effect.
-        for tag,proc in self.active_processes.items():
+        # Give a sec for kill to take effect.
+        for tag, proc in self.active_processes.items():
             proc.close()
 
-        print(pd.Categorical(self.table["status"]).describe())
+        print(pd.Categorical(self.table["status"]).describe(), flush=True)
 
-        if self.logfile is not None:
-            self.log(self.logfile)
-
+        # ======================changed==========================
+        # if self.logfile is not None:
+        self.log(self.logfile)
+        # ======================changed==========================
 
 
 def compile_model(modelpath, force=False):
+    """This function compiles all models that will be run later, the model.stan files
+    will be compiled and saved as model.pkl file to avoid repeated recompilation.
 
-    #Compiling them in the worker processes would mess with timing
-    #Also making sure it only gets compiled once
+    Args:
+        modelpath (_type_): The path of models to be run later.
+        force (bool, optional): Forces the program to compile the model regardless of
+        the presence of the precompiled model. Defaults to false.
+    """
 
+    # Compiling them in the worker processes would mess with timing,
+    # Also making sure it only gets compiled once
+
+    # if the compiled model exists, then skip compile
     picklename = modelpath.with_suffix(".pkl")
-
     if picklename in checked:
         return
 
+    # check whether the compiled model is created from the stan file
     use_pickle = False
     if picklename.exists():
         sp = picklename.stat()
@@ -282,49 +363,95 @@ def compile_model(modelpath, force=False):
 
     if use_pickle and (not force):
         checked.add(picklename)
-        print(f"Using precompiled model: {picklename}")
+        print(f"Using precompiled model: {picklename}", flush=True)
         return
 
+    # compile the model
     with modelpath.open("r") as infile:
-      model_definition = infile.read()
-    
+        model_definition = infile.read()
     model = pystan.StanModel(model_code=model_definition)
+
+    # save the compiled model into pkl file
     with picklename.open("wb") as f:
         pickle.dump(model, f)
-        print("Compiled model:",picklename)
+        print("Compiled model:", picklename, flush=True)
         checked.add(picklename)
+
+
+# ----------------------------------------running model------------------------
+
 
 def do_nothing(data, meta, extra):
     return data, meta, extra
 
+
 def basic_normalization(data, meta, extra):
+    """normalization of the X and sigma matrix.
+
+    Args:
+        data (_type_): _description_
+        meta (_type_): _description_
+        extra (_type_): _description_
+
+    Returns:
+        _type_: _description_
+    """
 
     const = np.nanmean(data["X"])
 
-    data["X"] = data["X"]/const
-    data["sigma"] = data["sigma"]/const
+    data["X"] = data["X"] / const
+    data["sigma"] = data["sigma"] / const
 
     meta["norm_const"] = const
 
     return data, meta, extra
 
+
 def read_benchmark(filepath):
+    """read the benchmark file as the original data
+
+    Args:
+        filepath (_type_): _description_
+
+    Returns:
+        _type_: _description_
+    """
 
     data, meta, extra = read_input(filepath)
 
-    #The original data is stored in the result file, so the postprocessing doesn't have to mix and match
+    # The original data is stored in the result file, so the postprocessing doesn't have to mix and match
     original_data = {}
+    # try:
+    #     original_data["F_orig"] = pd.read_hdf(filepath, "F").values
+    # except:
+    #     original_data["F_orig"] = np.nan * np.zeros((components, data["m"]))
+    #     logging.warning("Original F value does not exist.")
+    # try:
+    #     original_data["G_orig"] = pd.read_hdf(filepath, "G").values
+    # except:
+    #     original_data["F_orig"] = np.nan * np.zeros((data["n"],components))
+    #     logging.warning("Original G value does not exist.")
 
-    original_data["F_orig"] = pd.read_hdf(filepath, "F")
-    original_data["G_orig"] = pd.read_hdf(filepath, "G")
-    meta["components"] = original_data["F_orig"].index.to_numpy().astype("S")
-    original_data["F_orig"] = original_data["F_orig"].values
-    original_data["G_orig"] = original_data["G_orig"].values
+    original_data["F_orig"] = pd.read_hdf(filepath, "F").values
+    original_data["G_orig"] = pd.read_hdf(filepath, "G").values
+    meta["components"] = pd.read_hdf(filepath, "F").index.to_numpy().astype("S")
+
+    # original_data["F_orig"] = original_data["F_orig"].values
+    # original_data["G_orig"] = original_data["G_orig"].values
     meta.update(original_data)
 
     return data, meta, extra
 
+
 def read_input(filepath):
+    """This function read the data from the input file and precoess the data into units for analysing.
+
+    Args:
+        filepath (_type_): _description_
+
+    Returns:
+        _type_: _description_
+    """
 
     data = pd.read_hdf(filepath, "data")
     error = pd.read_hdf(filepath, "error")
@@ -334,62 +461,195 @@ def read_input(filepath):
     times = data.index.to_series().dt.strftime("%Y-%m-%d %H:%M:%S").values.astype("S20")
     columns = data.columns.values.astype("S")
 
-    timedeltas = data.index.to_series().diff().dt.total_seconds()[1:].values
+    timedeltas = (
+        data.index.to_series().diff().dt.total_seconds()[1:].values
+    )  # time difference between every entries
 
-    #Stuff that goes to model
-    data_out = {"X":data.values, "m":data.shape[1], "n":data.shape[0], "sigma":error.values, "timesteps":timedeltas, "beta_tau":np.log(np.prod(data.shape))}
+    # Stuff that goes to model
+    data_out = {
+        "X": data.values,
+        "m": data.shape[1],
+        "n": data.shape[0],
+        "sigma": error.values,
+        "timesteps": timedeltas,
+        "beta_tau": np.log(np.prod(data.shape)),
+    }
 
-    #A lower bound on a variable in the model
+    # A lower bound on a variable in the model
     data_out["minerr"] = data_out["sigma"].min() / 10
 
-    #Stuff that goes to output file
-    meta = {"columns":columns, "time_index":times}
+    # Stuff that goes to output file
+    meta = {"columns": columns, "time_index": times}
 
-    #Stuff that goes to preprocessing (if applicable)
-    extra = {"time_actual":actual_times, "time_delta":timedeltas}
+    # Stuff that goes to preprocessing (if applicable)
+    extra = {"time_actual": actual_times, "time_delta": timedeltas}
 
     return data_out, meta, extra
 
-preprocessing_functions = {"nothing":do_nothing, "basic":basic_normalization}
-loaders = {"basic":read_input ,"benchmark":read_benchmark}
 
-def run_model(action, datafile, description, init, loader, model, iterations, components, preprocessing, filename, initoptions, delta, treedepth, seed, extract=["tau", "F", "G", "alpha_n", "alpha_r", "alpha_s", "lp__"]):
+def restricted(data, meta, extra):
+
+    data, meta, extra = basic_normalization(data, meta, extra)
+
+    with h5py.File(meta["restrictionfile"], "r") as infile:
+
+        if "F_a" in infile:
+            # The indices start from 1 in STAN
+            # So while prepping them it is easier to use python indices, but we need to add +1 to them
+            data["F_a"] = infile["F_a"][()] + 1
+            data["F_b"] = infile["F_b"][()] + 1
+            data["F_values"] = infile["F_values"][()]
+            data["r"] = data["F_a"].shape[0]
+            data["F_sigma"] = meta["F_weight"] * np.ones(data["r"])
+
+        if "G_a" in infile:
+            data["G_a"] = infile["G_a"][()] + 1
+            data["G_b"] = infile["G_b"][()] + 1
+            data["r_g"] = data["G_a"].shape[0]
+            data["G_values"] = infile["G_values"][()]
+            data["G_sigma"] = meta["G_weight"] * np.ones(data["r_g"])
+
+        # Lists of the names of the cosntrained components and what their location is
+        meta["constrained_components"] = infile["restricted_components"][()]
+        meta["constrained_indices"] = infile["restriction_indices"][()]
+
+    return data, meta, extra
+
+
+preprocessing_functions = {
+    "nothing": do_nothing,
+    "basic": basic_normalization,
+    "restricted": restricted,
+}
+loaders = {"basic": read_input, "benchmark": read_benchmark}
+
+
+def add_metadata(meta, F_weight, G_weight, restrictionfile, preprocessing):
+    if F_weight is not None:
+        meta["F_weight"] = F_weight
+
+    if G_weight is not None:
+        meta["G_weight"] = G_weight
+
+    if restrictionfile is not None:
+        meta["restrictionfile"] = restrictionfile
+
+    if preprocessing not in preprocessing_functions:
+        raise ValueError(f"Unknown preprocesser {preprocessing}")
+    return meta
+
+
+def run_model(
+    action,
+    datafile,
+    description,
+    init,
+    loader,
+    model,
+    iterations,
+    components,
+    preprocessing,
+    filename,
+    initoptions,
+    delta,
+    treedepth,
+    seed,
+    extract=["tau", "F", "G", "alpha_a", "alpha_b", "lp__"],
+    F_weight=None,
+    G_weight=None,
+    restrictionfile=None,
+):
+
     """
     Should extract be explicitly always given?
     You can now still override it.
     """
-    
-    outpath = Path(filename)
-    logpath = outpath.with_suffix(".log")
 
-    #Make sure output directory exists
-    outpath.parent.mkdir(parents=True, exist_ok=True)
+    outpath = Path(filename)  # path to save the results
+    logpath = outpath.with_suffix(".log")  # path to save the log
+    outpath.parent.mkdir(
+        parents=True, exist_ok=True
+    )  # Make sure output directory exists
+
+    def model_init():
+
+        preoptions = {}
+
+        if "premodel_options" in initoptions:
+            preoptions.update(initoptions["premodel_options"])
+
+        inits = premodel.optimizing(data, **preoptions, as_vector=False, seed=seed)
+
+        return inits["par"]  # TODO reason to change this
+        # return inits
+
+    def init_nothing():
+        return {}
+
+    def nmf_init():
+
+        preoptions = {"max_iter": 2000}
+
+        if "premodel_options" in initoptions:
+            preoptions.update(initoptions["premodel_options"])
+
+        print("Running NMF initialization.", preoptions)
+
+        nonzerodata = data["X"].copy()
+        nonzerodata[nonzerodata <= 0] = 0
+
+        model_defined = NMF(
+            n_components=data["p"],
+            max_iter=preoptions["max_iter"],
+            init="random",
+            random_state=seed,
+        )
+        G = model_defined.fit_transform(nonzerodata)
+        F = model_defined.components_
+
+        # Unfortunately our model doesn't accept 0 exact
+        G[G == 0] = 1e-10
+        F[F == 0] = 1e-10
+
+        def norm(F, G):
+
+            sums = F.sum(axis=1)
+
+            F = F / sums[:, None]
+            G = G * sums
+
+            return F, G
+
+        F, G = norm(F, G)
+
+        print("Ran NMF.")
+
+        return {"F": F, "G": G}
 
     with Silencer(logpath):
 
         picklename = Path(model).with_suffix(".pkl")
-
-        loaded_model = pickle.load(picklename.open('rb'))
+        loaded_model = pickle.load(picklename.open("rb"))
 
         premodel = None
+
         if "premodel" in initoptions:
             if type(initoptions["premodel"]) is list:
                 premodel = []
                 for k in initoptions["premodel"]:
                     prepicklename = Path(k).with_suffix(".pkl")
-                    premodel.append(pickle.load(prepicklename.open('rb')))      
+                    premodel.append(pickle.load(prepicklename.open("rb")))
             else:
                 prepicklename = Path(initoptions["premodel"]).with_suffix(".pkl")
-                premodel = pickle.load(prepicklename.open('rb'))
+                premodel = pickle.load(prepicklename.open("rb"))
 
-        #Metadata is added to output
+        # Metadata is added to output
         data, meta, extra = loaders[loader](Path(datafile))
 
-        if preprocessing not in preprocessing_functions:
-            raise ValueError(f"Unknown preprocesser {preprocessing}")
+        meta = add_metadata(meta, F_weight, G_weight, restrictionfile, preprocessing)
 
         data, meta, extra = preprocessing_functions[preprocessing](data, meta, extra)
-        
+
         if "samples" in initoptions:
             extra["samples"] = initoptions["samples"]
 
@@ -397,53 +657,73 @@ def run_model(action, datafile, description, init, loader, model, iterations, co
 
         data["p"] = components
 
-        args = ["action", "datafile", "init", "loader", "model", "iterations", "components", "preprocessing", "filename", "initoptions", "delta", "treedepth", "seed", "extract"]
+        args = [
+            "action",
+            "datafile",
+            "init",
+            "loader",
+            "model",
+            "iterations",
+            "components",
+            "preprocessing",
+            "filename",
+            "initoptions",
+            "delta",
+            "treedepth",
+            "seed",
+            "extract",
+        ]
 
         for key in args:
             locs = locals()
             put = locs[key]
             if put is not dict:
-                meta["arg_"+key] = put
+                meta["arg_" + key] = put
             else:
-                meta["arg_"+key] = str(put)
+                meta["arg_" + key] = str(put)
 
-        #Pystans runner really doesn't like partial functions which is the more elegant way to do this
+        # Pystans runner really doesn't like partial functions which is the more elegant way to do this
 
-        def model_init():
+        init_functions = {
+            "model_init": model_init,
+            "nothing": init_nothing,
+            "nmf_init": nmf_init,
+        }
 
-            preoptions = {}
-
-            if "premodel_options" in initoptions:
-                preoptions.update(initoptions["premodel_options"])
-
-            inits = premodel.optimizing(data, **preoptions, as_vector=True)
-
-            return inits
-
-
-        def init_nothing():
-            return {}
-
-
-        init_functions = {"model_init":model_init, "nothing":init_nothing}
-    
         if init not in init_functions:
             raise ValueError(f"Unknown init {init}")
 
         init_function = init_functions[init]
+
         wall_start = pd.Timestamp("now")
-  
 
         if action == "sampling":
-            fitted = loaded_model.sampling(data=data, iter=iterations, init=init_function, chains=1, n_jobs=1, seed=seed, control={"adapt_delta":delta, "max_treedepth":treedepth})
+            fitted = loaded_model.sampling(
+                data=data,
+                iter=iterations,
+                init=init_function,
+                chains=1,
+                n_jobs=1,
+                seed=seed,
+                control={"adapt_delta": delta, "max_treedepth": treedepth},
+            )
             results = fitted.extract(pars=extract, permuted=False, inc_warmup=True)
         elif action == "map":
-            #We want random init here
-            results =  loaded_model.optimizing(data=data, iter=iterations, as_vector=True, seed=seed)
+            # We want random init here
+            results = loaded_model.optimizing(
+                data=data, iter=iterations, as_vector=True, seed=seed
+            )
         else:
             raise ValueError(f"Unknown action {action}")
 
         wall_end = pd.Timestamp("now")
         wall_duration = (wall_end - wall_start).total_seconds()
-        
-        helpers.dump_hdf5(outpath, **results, description=description, wall_duration=wall_duration, **data, **meta)
+
+        helpers.dump_hdf5(
+            outpath,
+            **results,
+            description=description,
+            wall_duration=wall_duration,
+            **data,
+            **meta,
+        )
