@@ -2,3 +2,13 @@ plots/**
 results/**
 models/**.pkl
 analysis_codes/__pycache__/**
+.Rproj.user
+.Rhistory
+**nb.html*
+**html
+notebooks/*_cache
+notebooks/*_files
+notebooks/*.svg
+
+# pycharm
+**.DS_Store
