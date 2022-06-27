@@ -12,8 +12,7 @@ from scipy.stats import (binom_test, kruskal, ks_2samp, pearsonr, spearmanr)
 from . import plotting
 from .helpers import (Collated_output, calculate_Z_contribution,
                       distance_label_batch, distance_label_batch_by_Z,
-                      dump_hdf5, get_plot_filename,
-                      normalize, normalize_chains,
+                      get_plot_filename,
                       sort_by_batch_label)
 
 
