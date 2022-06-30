@@ -154,7 +154,7 @@ posterior_analysis <- function(csv_file_posterior, G_, output_file){
 
   samples <-  extract_cmdstan_samples(fit_mcmc)
 
-  pdf("/Users/Daniel/git/aurora/data/posterior/test.pdf")
+  pdf(output_file)
 
   mean_cor<- cor_plot_g(samples, G_)
   median_cor <- cor_plot_g(samples,G_,"median")
