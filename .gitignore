@@ -12,3 +12,5 @@ notebooks/*.svg
 
 # pycharm
 **.DS_Store
+**_checkpoints
+**__pycache__
