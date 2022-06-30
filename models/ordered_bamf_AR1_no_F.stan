@@ -25,9 +25,9 @@ transformed data {
 parameters {
   matrix<lower=0>[n,p] G; // score matrix
   simplex[m] F[p]; // loadings simplex
-  ordered[p] alpha_a; // Posterior a
+  vector[p] alpha_a; // Posterior a
   vector[p] alpha_b; // Posterior b
-  vector[p] sigma_a;
+  vector<lower=0>[p] sigma_a;
 }
 
 model {
@@ -40,10 +40,10 @@ model {
   for(j in 1:p) {
     F[j] ~ dirichlet(concentration);
     
-    G[2:,j] ~ normal(alpha_a[j]  + exp(alpha_b[j])*G[:(n-1),j], exp(sigma_a[j])); // gaussian
+    G[2:,j] ~ normal(alpha_a[j]  + alpha_b[j]*G[:(n-1),j], sigma_a[j]); // gaussian
   }
 
   // X ~ Z = G * F
-  Xv ~ normal(to_vector(G*vector_array_to_matrix(F)), 10*sigmav);
+  Xv ~ normal(to_vector(G*vector_array_to_matrix(F)), sigmav);
 
 }
