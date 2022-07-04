@@ -148,7 +148,7 @@ get_labels_g <- function(cor_matrix){
 }
 
 posterior_analysis <- function(csv_file_posterior, G_, output_file){
-  
+  P <- ncol(G_)
   fit_mcmc <- cmdstanr::as_cmdstan_fit(csv_file_posterior)
   
 
@@ -169,11 +169,71 @@ posterior_analysis <- function(csv_file_posterior, G_, output_file){
       print(bayesplot::pp_check(x$y , x$y_rep, ppc_dens_overlay))
       plot_z_scores_g(samples, G_, mean_labels[i,2], i)
       plot_median_error_g(samples, G_, mean_labels[i,2], i)
-      plot_mean_error_g(samples, G_, mean_labels[i,2], i)
+     
+      blue <- rgb(0, 0, 1, alpha=0.1)
+      n<- barplot( as.numeric(F_[i,]),col=blue, main=paste0("F component:", as.character(i))) 
+      boxplot(samples$F[,i,], frame=F,range=0, at=n, add=T)
   }
 
 
-  bayesplot::mcmc_trace(fit_mcmc$draws(),regex_pars = "alpha")
+  print(bayesplot::mcmc_trace(fit_mcmc$draws(),regex_pars = "alpha"))
 
   dev.off()
+}
+
+
+map_analysis <- function(fit_map,G_,output_file){
+  P <- ncol(G_)
+  N <- nrow(G_)
+  fit_map <- fit_bamf_gauss_noF_map
+  draws <- fit_map$draws(format="df")
+  result <- matrix(rep(0,P*N),ncol=P) 
+  for(i in 1:P){
+    select_string <- paste(c(",",as.character(i)),collapse="")
+    current_column <- draws_ %>% as_tibble() %>% select(starts_with("G")) %>% 
+      select(contains(select_string)) %>% as.numeric()
+    current_column
+    result[,i] <- current_column
+  } 
+  map_cor <- corrplot(cor(result,G_))
+  mean_labels = get_labels_g(cor_matrix = cor(result,G_))
+  for(i in 1:P){
+     component_number_true <-mean_labels[i,2]
+    component_number_post <- i
+    data_map <- data.frame(true_G = as.matrix(G_)[, mean_labels[i,2]], map =result[, mean_labels[i,2]])
+    plot(lm(true_G ~ map, data=data_map))
+    y_hat = data_map$map
+    y_true = data_map$true_G
+    alpha = 150 
+    palette(c(rgb(200, 79, 178, alpha = alpha, maxColorValue = 255),
+              rgb(105, 147, 45, alpha = alpha, maxColorValue = 255),
+              rgb(85, 130, 169, alpha = alpha, maxColorValue = 255)))
+    par(mar = c(3, 3, 2, 1), # Dist' from plot to side of page
+        mgp = c(2, 0.4, 0), # Dist' plot to label
+        las = 1, # Rotate y-axis text
+        tck = -.01, # Reduce tick length
+        xaxs = "i", yaxs = "i") # Remove plot padding
+    plot(y_true ~ y_hat)
+    abline(lm(y_true~y_hat))
+    abline(0,1, col="red")
+    
+    true_component <- y_true
+    x <- 1:length(true_component)
+   
+    max_y <- max(true_component)
+    min_y <- min(true_component)
+    plot(1, type="n", main=paste(
+      c("G_true:",
+        as.character(component_number_true),
+        "G_post:",
+        as.character(component_number_post)),
+      collapse=" "
+    ),
+    xlab="x", ylab="f", xlim=c(min(x), max(x)), ylim=c(min_y, max_y))
+    
+    lines(x, y_hat, col=c_dark, lwd=2)
+    lines(x, true_component, lwd=4, xlab="x", ylab="f", col="white")
+    lines(x, true_component, lwd=2, xlab="x", ylab="f", col="black")
+    #  plot_mean_error_g(samples, G_, mean_labels[i,2], i)
+  }
 }
