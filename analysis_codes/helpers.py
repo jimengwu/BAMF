@@ -17,7 +17,7 @@ from tqdm import tqdm
 class Collated_output:
     def __init__(self, filename, save_types=["pdf"], compression=zipfile.lzma):
 
-        self.output = zipfile.ZipFile(filename, "w")
+        self.output = zipfile.ZipFile(filename, "a")
         self.save_types = save_types
 
     def __enter__(self):
@@ -32,14 +32,22 @@ class Collated_output:
             figure.savefig(out, format=suffix, bbox_inches="tight")
             self.output.writestr(savename, out.getvalue())
 
+    def savetxt(self, lines, name):
+        suffix = "txt"
+        savename = f"{suffix}/{name}.{suffix}"
+        Path(savename).parent.mkdir(parents=True, exist_ok=True)
+
+        self.output.writestr(savename, str(lines))
+
     def __exit__(self, type=None, value=None, traceback=None):
 
         self.output.close()
 
 
-def get_plot_filename(basepath, filename, removal=re.compile("_seed-[0-9]+")):
+def get_plot_filename(
+    basepath, filename, sorting=True, removal=re.compile("_seed-[0-9]+")
+):
     # Removes the seed (since that is merged by analysis code) and provides a zipfilename to save plots
-
     removals = removal.findall(filename)
 
     endfilename = filename
@@ -47,9 +55,18 @@ def get_plot_filename(basepath, filename, removal=re.compile("_seed-[0-9]+")):
     for item in removals:
         endfilename = endfilename.replace(item, "")
 
-    endfilename = Path(endfilename).with_suffix(".zip").name
+    if sorting == False:
+        print("unsorted")
+        endfilename = Path(
+            Path(endfilename).with_suffix("").name + str("_unsorted")
+        ).with_suffix(".zip")
+    else:
+        endfilename = Path(endfilename).with_suffix(".zip").name
 
-    return basepath / endfilename
+    try:
+        return basepath / endfilename
+    except TypeError:
+        return Path(basepath) / endfilename
 
 
 def find_lists(x):
@@ -82,7 +99,7 @@ def generate_options(filepath, result_output):
         "model",
         "restriction",
         "outputbase",
-    }  # Q: why is the restriction here
+    }
     unhashable = {"initoptions"}
     forbidden = possible_paths | unhashable
 
@@ -279,16 +296,18 @@ def calculate_Z_contribution(F, G):
         _type_: _description_
     """
 
-    components = F.shape[0]
+    # components = F.shape[0]
 
-    Z = []
+    # Z = []
 
-    for c in range(components):
-        Z.append(
-            (((G[:, c][:, None]) @ (F[c, :][None, :])) / np.mean(G[:, c])).flatten()
-        )
-
-    return np.stack(Z)
+    # for c in range(components):
+    #     Z.append(
+    #         (((G[:, c][:, None]) @ (F[c, :][None, :])) / np.mean(G[:, c])).flatten()
+    #     )
+    # return np.stack(Z)
+    G_norm = G / np.mean(G, axis=0)
+    Z = (np.einsum("nk,km->knm", G_norm, F)).reshape(F.shape[0], -1)
+    return Z
 
 
 def distance_label_batch_by_Z(F, G, exemplars, metric="euclidean"):
