@@ -1,6 +1,7 @@
 plots/**
 results/**
-models/**.pkl
+models/**
+!models/*.stan
 analysis_codes/__pycache__/**
 .Rproj.user
 .Rhistory
@@ -14,3 +15,7 @@ notebooks/*.svg
 **.DS_Store
 **_checkpoints
 **__pycache__
+
+
+# cmdstan
+**hpp
