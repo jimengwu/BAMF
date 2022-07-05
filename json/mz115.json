@@ -1,0 +1,37 @@
+{
+    "general": {
+        "iterations": 2000,
+        "treedepth": 12,
+        "delta": 0.9,
+        "preprocessing": "basic",
+        "action": "sampling",
+        "outputbase": "/data/users/march_mz115",
+        "loader": "benchmark",
+        "init": "model_init",
+        "seed": [
+            16,
+            5687
+        ]
+    },
+    "5_basic": {
+        "description": "testing the amount of components the file was written with",
+        "components": 5,
+        "datafile": [
+		"/data/shared/bamf/Zurich-Tof-ACSM/input_matrices_martavia_noised_20220315_winter.h5"
+        ],
+        "extract": [
+            "F",
+            "G",
+            "alpha_a",
+            "alpha_b",
+            "lp__"
+        ],
+        "model": "/home/daniel/aurora/src/python/auroraPSI/BAMF/models/bamf.stan" ,
+        "initoptions": {
+            "premodel": "/home/daniel/aurora/src/python/auroraPSI/BAMF/models/bamf.stan",
+            "premodel_options": {
+                "iter": 2000
+            }
+        }
+    }
+}
