@@ -31,7 +31,7 @@ parameters {
   vector<lower=0>[p] left_f;
 }
 transformed parameters{
-  matrix<lower=0>[p,m] F; // loadings simplex
+  matrix[p,m] F; // loadings simplex
   F = left_f * right_f + S;
 }
 model {
