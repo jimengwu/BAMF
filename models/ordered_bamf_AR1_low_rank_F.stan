@@ -30,11 +30,12 @@ parameters {
   vector<lower=0>[p] sigma_a;
   row_vector<lower=0>[m] right_f;
   vector<lower=0>[p] left_f;
+  matrix<lower=0>[p,m] S;
 }
 
 transformed parameters{
   matrix<lower=0>[p,m] F; // loadings simplex
-  F = left_f * right_f;
+  F = left_f * right_f + S;
 }
 
 model {
@@ -42,7 +43,7 @@ model {
   // The priors for G and F are implicitly given in the parameters section,
   //  so explicitly stating them here would only lead to unnecessary calculations
   //  (uniform priors become additive constants (in logspace), that can be ignored).
-  
+  to_vector(S) ~ normal(0,0.01);  
   // Column-wise autocorrelation
   for(j in 1:p) {
     
