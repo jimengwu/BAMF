@@ -45,6 +45,6 @@ model {
   }
 
   // X ~ Z = G * F
-  Xv ~ normal(to_vector(G*vector_array_to_matrix(F)), sigmav);
+  Xv ~ normal(to_vector(G*vector_array_to_matrix(F)[:,selected_indexes]), sigmav);
 
 }
