@@ -33,6 +33,49 @@ def cal_metrics(data1, data2, metric):
     return coeffs
 
 
+def plot_benchmark(data, palette=None, label="G"):
+
+    if label == "F":
+        idx_factor = 0
+        factor_position = data.index
+        x_position = data.columns
+    else:
+        idx_factor = 1
+        factor_position = data.columns
+        x_position = data.index
+
+    fig, axes = plt.subplots(data.shape[idx_factor], sharex=True)
+    if palette is None:
+        palette = sns.color_palette(n_colors=len(axes))
+
+    for i, x in enumerate(axes):
+        ylabel = np.array(factor_position)[i]
+        if label == "F":
+            x.bar(
+                np.array(x_position),
+                np.array(data[data.index == ylabel]).ravel(),
+                label=np.array(factor_position)[i],
+                color=palette[i],
+            )
+
+        else:
+            x.plot(data.index, data[ylabel], "--", label=ylabel, color=palette[i])
+
+        twin = axes[i].twinx()
+
+        twin.get_yaxis().set_ticks([])  # hiding the ticks
+
+        x.set_ylim([0, x.get_ylim()[1]])  # set the y value axis range
+
+        axes[i].tick_params(axis="y", labelsize=22)
+        axes[i].legend(loc="upper right", fontsize=18)
+        for tick in x.xaxis.get_major_ticks():
+            tick.label.set_fontsize(20)
+
+
+#     return fig
+
+
 def plot_diagnostic(di, name, thresh=0.05):
 
     n = int(di.shape[0] / 2)

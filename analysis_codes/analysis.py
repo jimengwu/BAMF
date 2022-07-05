@@ -160,15 +160,19 @@ def merge_chains(data, n=1000, partial=False):
 
     autocorrelation_parameters = [i for i in data.keys() if i.startswith("alpha")]
 
-    # Sometimes all you have is one chain...
+    # Sometimes all you have is one chain... Q: why take the warmup + sampler
     if data["F"].shape[1] == 1:
-        data["F"] = data["F"].squeeze()
-        data["G"] = data["G"].squeeze()
-        for item in autocorrelation_parameters:
-            data[item] = data[item].squeeze()
+        # data["F"] = data["F"].squeeze()
+        # data["G"] = data["G"].squeeze()
+        # for item in autocorrelation_parameters:
+        #     data[item] = data[item].squeeze()
 
-        if partial:
-            data["height"] = data["height"].squeeze()
+        # if partial:
+        #     data["height"] = data["height"].squeeze()
+        data["F"] = data["F"][n:]
+        data["G"] = data["G"][n:]
+        for item in autocorrelation_parameters:
+            data[item] = data[item][n:]
 
     else:
 
@@ -274,7 +278,7 @@ def sort_by_Z_contribution(
 
     indices = ind[np.argmax(count)].reshape(data["F"].shape[0:2])
 
-    print("Sorting", flush=True)
+    print("Sorting starts...", flush=True)
     data_sorted = data
     data_sorted["F"] = sort_by_batch_label(data_sorted["F"], indices)
 
@@ -283,11 +287,13 @@ def sort_by_Z_contribution(
     # switch this two axese, don't know why
     data_sorted["G"] = np.swapaxes(data_sorted["G"], -1, -2)
 
-    autocorrelation_parameters = [i for i in data_sorted.keys() if i.startswith("alpha")]
+    autocorrelation_parameters = [
+        i for i in data_sorted.keys() if i.startswith("alpha")
+    ]
     for item in autocorrelation_parameters:
         data_sorted[item] = sort_by_batch_label(data_sorted[item], indices, axis="1d")
 
-    return data_sorted
+    return data_sorted, indices
 
 
 def z_scale(residuals):
@@ -682,6 +688,19 @@ default_model_labels = {
         "alpha_a",
         "alpha_b",
     ],
+    "bamf_gaussian": [
+        "F",
+        "G",
+        "X",
+        "m",
+        "n",
+        "p",
+        "lp__",
+        "sigma",
+        "norm_const",
+        "alpha_a",
+        "alpha_b",
+    ],
 }
 
 
@@ -694,7 +713,8 @@ def analyze_frame(
     model_data=None,
     get_tags=None,
     basepath=Path("./plots"),
-    save_sorted=None,
+    save_plot=True,
+    sorting=True,
     add_mz_mode=False,
 ):
 
@@ -738,12 +758,14 @@ def analyze_frame(
         metrics.update(chain_diagnostics(data))
 
         merge_chains(data, n=data["samples"])  # extract last n draws from each chain
-
+        indices_chains = np.nan
         # slicy = slice(-len(dataset["filename"]), None)
-
-        data = sort_by_Z_contribution(
-            data, take=slice(-len(dataset["filename"]), None), metric=distance_metric
-        )
+        if sorting:
+            data, indices_chains = sort_by_Z_contribution(
+                data,
+                take=slice(-len(dataset["filename"]), None),
+                metric=distance_metric,
+            )
 
         data["Z"] = np.stack(
             [data["G"][i, :, :] @ data["F"][i, :, :] for i in range(data["G"].shape[0])]
@@ -759,10 +781,11 @@ def analyze_frame(
 
         data["samples"] = min(data["chains"], 1000)
         # data["samples"] = data["chains"]
-
-        data = sort_by_Z_contribution(
-            data, take=slice(0, data["samples"]), metric=distance_metric
-        )
+        indices_chains = np.nan
+        if sorting:
+            data, indices_chains = sort_by_Z_contribution(
+                data, take=slice(0, data["samples"]), metric=distance_metric
+            )
 
         data["Z"] = np.stack(
             [data["G"][i, :, :] @ data["F"][i, :, :] for i in range(data["G"].shape[0])]
@@ -779,11 +802,14 @@ def analyze_frame(
 
     if benchmark:
         first_file = dataset.iloc[0, :]["filename"]
+
         # Assuming these are normalized correctly and the right size.
         with h5py.File(first_file, "r") as infile:
             data["F_orig"] = infile["F_orig"][()]
             data["G_orig"] = infile["G_orig"][()]
 
+        # data["F_orig"] = pd.read_hdf(dataset.iloc[0, :]["datafile"], "F").values
+        # data["G_orig"] = pd.read_hdf(dataset.iloc[0, :]["datafile"], "G").values
     # Sort and label with reference F if available.
     if match_file is not None:
 
@@ -832,68 +858,71 @@ def analyze_frame(
 
     records = dataset.to_dict("records")
 
-    outfilename = get_plot_filename(basepath, first_file)
+    outfilename = get_plot_filename(basepath, first_file, sorting)
     outfilename.parent.mkdir(parents=True, exist_ok=True)
-
     sorted_filename = outfilename.with_suffix(".nc4")
-    print(outfilename, flush=True)
 
-    with Collated_output(outfilename) as outfile:
-        print("start plotting...", ctime(), flush=True)
-        if "lp__" in data:
-            f, p = plotting.plot_diagnostic(data["lp__"], "log prob")
-            outfile.savefig(f, "log prob")
-            print("log prob", flush=True)
+    if save_plot:
+        if sorting == False:
+            sorted = "_unsorted"
+        else:
+            sorted = ""
+        with Collated_output(outfilename) as outfile:
+            print("start plotting...", ctime(), flush=True)
+            if "lp__" in data:
+                f, p = plotting.plot_diagnostic(data["lp__"], "log prob")
+                outfile.savefig(f, "log prob" + sorted)
+                print("log prob", flush=True)
+                plt.close()
+                metrics["log prob p"] = p
+
+                lp_m = summarize_diagnostic(data["lp__"], "log prob")
+
+                metrics.update(lp_m)
+
+            f = plotting.mass_conservation(data, sample="median")
+            print("conservation from median G saved", flush=True)
+            outfile.savefig(f, "conservation from median G" + sorted)
             plt.close()
-            metrics["log prob p"] = p
 
-            lp_m = summarize_diagnostic(data["lp__"], "log prob")
+            f = plotting.mass_conservation(data, sample=-1)
+            print("conservation from last sample saved", flush=True)
+            outfile.savefig(f, "conservation from last sample" + sorted)
+            plt.close()
 
-            metrics.update(lp_m)
+            # plot standard G,F plots, with truth if benchmark
 
-        f = plotting.mass_conservation(data, sample="median")
-        print("conservation from median G saved", flush=True)
-        outfile.savefig(f, "conservation from median G")
-        plt.close()
+            f = plotting.plot_F(data, benchmark=benchmark)
+            print("F saved", flush=True)
+            outfile.savefig(f, "F" + sorted)
+            plt.close()
 
-        f = plotting.mass_conservation(data, sample=-1)
-        print("conservation from last sample saved", flush=True)
-        outfile.savefig(f, "conservation from last sample")
-        plt.close()
+            f = plotting.plot_G(data, benchmark=benchmark)
+            print("G saved", flush=True)
+            outfile.savefig(f, "G" + sorted)
+            plt.close()
 
-        # plot standard G,F plots, with truth if benchmark
+            f = plotting.plot_median_G(data, benchmark=benchmark)
+            print("median G saved", flush=True)
+            outfile.savefig(f, "median_G" + sorted)
+            plt.close()
 
-        f = plotting.plot_F(data, benchmark=benchmark)
-        print("F saved", flush=True)
-        outfile.savefig(f, "F")
-        plt.close()
+            if action == "map":
 
-        f = plotting.plot_G(data, benchmark=benchmark)
-        print("G saved", flush=True)
-        outfile.savefig(f, "G")
-        plt.close()
+                for i in range(data["p"]):
+                    f = plotting.plot_individual_F(
+                        data, i, benchmark=benchmark, sample_size=7
+                    )
+                    print(f"F_map_{i} " + "saved", flush=True)
+                    outfile.savefig(f, f"F_map_{i}" + sorted)
+                    plt.close()
 
-        f = plotting.plot_median_G(data, benchmark=benchmark)
-        print("median G saved", flush=True)
-        outfile.savefig(f, "median_G")
-        plt.close()
-
-        if action == "map":
-
-            for i in range(data["p"]):
-                f = plotting.plot_individual_F(
-                    data, i, benchmark=benchmark, sample_size=7
-                )
-                print(f"F_map_{i} " + "saved", flush=True)
-                outfile.savefig(f, f"F_map_{i}")
+                f = plotting.plot_individual_G(data, benchmark=benchmark, sample_size=7)
+                print("G_map saved", flush=True)
+                outfile.savefig(f, "G_map" + sorted)
                 plt.close()
 
-            f = plotting.plot_individual_G(data, benchmark=benchmark, sample_size=7)
-            print("G_map saved", flush=True)
-            outfile.savefig(f, "G_map")
-            plt.close()
-
-            pass
+                pass
 
     # Calculate metrics
 
@@ -921,6 +950,15 @@ def analyze_frame(
             "timestep": data["timestep"],
         },
     )
+    if "lp__" in data:
+        print(data["lp__"].shape)
+        data_xarray["lp__"] = xr.DataArray(
+            data["lp__"],
+            coords={
+                "total": np.arange(data["lp__"].shape[0]),
+                "chains": np.arange(data["lp__"].shape[1]),
+            },
+        )
     if benchmark and match_file is not None:
         orig_labels = match_profiles.index
         data_xarray["G_orig"] = xr.DataArray(
@@ -941,13 +979,17 @@ def analyze_frame(
         data_xarray = add_mz(data_xarray)
     data_xarray.to_netcdf(sorted_filename)
 
-    return data_xarray, metrics
+    return data_xarray, metrics, indices_chains
 
 
 def add_mz(data):
     print("adding few mzs...")
     mz_vars = {}
-
+    try:
+        mz_vars["alpha_a"] = data["alpha_a"]
+        mz_vars["alpha_b"] = data["alpha_b"]
+    except:
+        pass
     data["variable"] = data.variable.astype(int)
 
     mz44 = data["F"].loc[:, :, 44]
@@ -1001,10 +1043,10 @@ def add_mz(data):
 
     if "F_orig" in data:
 
-        add_F = np.zeros(shape=(len(data.orig_labels), len(index)))
+        add_F = np.zeros(shape=(len(data.labels), len(index)))
         add_F = xr.DataArray(
             add_F,
-            coords={"orig_labels": data.orig_labels, "variable": index},
+            coords={"orig_labels": data.labels.values, "variable": index},
             name="F_orig",
         )
         mz44 = data["F_orig"].loc[:, 44]
@@ -1095,8 +1137,12 @@ def extract_pmf_data_in_normal_form(
         # time_index = f["PMF_input"][tsname][()].astype(int)
         # profile_index = f["PMF_input"][prname][()].astype(int)
         try:
-            result["X"] = f["PMF_input"][dataname][()][np.array(f["PMF_input"]["tseries_index"]).astype(int)][:,np.array(f["PMF_input"]["profile_index"]).astype(int)]
-            result["sigma"] = f["PMF_input"][errorname][()][np.array(f["PMF_input"]["tseries_index"]).astype(int)][:,np.array(f["PMF_input"]["profile_index"]).astype(int)]
+            result["X"] = f["PMF_input"][dataname][()][
+                np.array(f["PMF_input"]["tseries_index"]).astype(int)
+            ][:, np.array(f["PMF_input"]["profile_index"]).astype(int)]
+            result["sigma"] = f["PMF_input"][errorname][()][
+                np.array(f["PMF_input"]["tseries_index"]).astype(int)
+            ][:, np.array(f["PMF_input"]["profile_index"]).astype(int)]
         except:
             print(f["PMF_input"].keys())
         if metadatafile != None:
@@ -1244,6 +1290,7 @@ def analyze_frame_for_pmf(
     basepath=Path("./plots"),
     add_mz_mode=False,
     force_normalization=False,
+    sorting=True,
 ):
     metrics = {}
 
@@ -1257,10 +1304,10 @@ def analyze_frame_for_pmf(
         data["G"] = data["G"] * F_sum[:, None, :]
 
     # Choose the most popular order of the last samples
+    if sorting:
+        slicy = slice(-len(data["F"]), None)
 
-    slicy = slice(-len(data["F"]), None)
-
-    data = sort_by_Z_contribution(data, take=slicy, metric=distance_metric)
+        data, indices = sort_by_Z_contribution(data, take=slicy, metric=distance_metric)
 
     data["Z"] = np.stack(
         [data["G"][i, :, :] @ data["F"][i, :, :] for i in range(data["G"].shape[0])]
@@ -1281,7 +1328,6 @@ def analyze_frame_for_pmf(
         except:
             match_profiles = pd.read_hdf(match_file, "G")
             data["orig_labels"] = list(match_profiles.columns.values)
-
 
         median_F = np.median(data["F"], axis=0)
 
@@ -1348,6 +1394,7 @@ def analyze_frame_wo_plot(
     basepath=Path("./plots"),
     save_sorted=None,
     add_mz_mode=False,
+    sorting=True,
 ):
 
     metrics = {}
@@ -1378,12 +1425,12 @@ def analyze_frame_wo_plot(
         tags = t
 
     data = get_generic_data_from_multiple_files(dataset["filename"], labels=tags)
-    first_file = dataset.iloc[0, :]["filename"]  # results location
+    first_chain = dataset.iloc[0, :]["filename"]  # results location
     datafile = dataset.iloc[0, :]["datafile"]  # input data file location
     data["chains"] = len(dataset.filename)
 
+    # Choose the most popular order of the last samples
     if action == "sampling":
-        # Choose the most popular order of the last samples
 
         data["samples"] = int(data["G"].shape[0] / 2)  # sample half of the results
 
@@ -1393,24 +1440,192 @@ def analyze_frame_wo_plot(
 
         slicy = slice(-len(dataset["filename"]), None)
 
-        data = sort_by_Z_contribution(data, take=slicy, metric=distance_metric)
+        if sorting:
+            data, indices = sort_by_Z_contribution(
+                data, take=slicy, metric=distance_metric
+            )
 
         data["Z"] = np.stack(
             [data["G"][i, :, :] @ data["F"][i, :, :] for i in range(data["G"].shape[0])]
         )
 
-        # Take metadata (timelist and m/z numbers) from first file (should match across files)
-        with h5py.File(first_file, "r") as infile:
-            time_str = infile["time_index"][()].astype("str")
-            data["timestep"] = pd.to_datetime(time_str, format="%Y-%m-%d %H:%M:%S")
-            data["variable"] = infile["columns"][()].astype("str")
+    elif action == "map":
+
+        data["samples"] = min(data["chains"], 1000)
+        if sorting:
+            data, indices = sort_by_Z_contribution(
+                data, take=slice(0, data["samples"]), metric=distance_metric
+            )
+
+        data["Z"] = np.stack(
+            [data["G"][i, :, :] @ data["F"][i, :, :] for i in range(data["G"].shape[0])]
+        )
+
+    else:
+        raise ValueError(f"Unknown action:{action} performed by model")
+
+    # Take metadata (timelist and m/z numbers) from first file (should match across files)
+    with h5py.File(first_chain, "r") as infile:
+        time_str = infile["time_index"][()].astype("str")
+        data["timestep"] = pd.to_datetime(time_str, format="%Y-%m-%d %H:%M:%S")
+        data["variable"] = infile["columns"][()].astype("str")
+
+    # Sort and label with reference F if available.
+    if match_file is not None:
+
+        data["F_orig"] = np.array(pd.read_hdf(match_file, "F"))
+        data["G_orig"] = np.array(pd.read_hdf(match_file, "G"))
+
+        match_profiles = pd.read_hdf(match_file, "F")
+        data["orig_labels"] = list(match_profiles.index.values)
+        # sorting the benchmark and match the labels
+        if action == "sampling" or action == "map":
+
+            # sort the component index of extracted draws from each chain match to the benchmark based on F matrix
+            median_F = np.median(data["F"], axis=0)
+
+            indices, labels = match_labels(
+                median_F, match_profiles, cutoff=cutoff, distance_metric=distance_metric
+            )
+
+            all_indices = set(np.arange(data["F"].shape[1]))
+            # unmatched component index
+            unresolved = list(set(all_indices) - set(indices))
+
+            indices = [*indices, *unresolved]
+
+            data["F"] = data["F"][:, indices, :]
+            data["G"] = data["G"][:, :, indices]
+
+            autocorr = [i for i in data.keys() if i.startswith("alpha")]
+
+            for item in autocorr:
+                data[item] = data[item][:, indices]
+
+            data["labels"] = labels  # component name
+
+            # assign questionmark to unmatched component result
+            if len(unresolved) > 0:
+                for kk in range(len(unresolved)):
+                    data["labels"] = np.append(data["labels"], "?" + str(kk))
+
+            data["reference_F"] = match_profiles
+
+    else:
+        data["labels"] = np.arange(data["p"]).astype(str)
+
+    outfilename = get_plot_filename(basepath, first_chain, sorting)
+    outfilename.parent.mkdir(parents=True, exist_ok=True)
+
+    sorted_filename = outfilename.with_suffix(".nc4")
+
+    # Calculate metrics
+
+    summary = summarize_frame(data, benchmark=benchmark)
+
+    metrics.update(summary)
+
+    if "lp__" in data:
+        metrics.update(sign_diagnostic(data["lp__"], "log prob"))
+
+    # Save intermediary file containing sorted data
+    data_xarray = xr.Dataset(
+        {
+            "F": (["samples", "labels", "variable"], data["F"]),
+            "G": (["samples", "timestep", "labels"], data["G"]),
+            "X": (["timestep", "variable"], data["X"]),
+            "error": (["timestep", "variable"], data["sigma"]),
+            "alpha_a": (["samples", "labels"], data["alpha_a"]),
+            "alpha_b": (["samples", "labels"], data["alpha_b"]),
+            "G_orig": (["timestep", "orig_labels"], data["G_orig"]),
+            "F_orig": (["orig_labels", "variable"], data["F_orig"]),
+        },
+        coords={
+            "samples": np.arange(data["F"].shape[0]),
+            "labels": data["labels"],
+            "variable": data["variable"],
+            "timestep": data["timestep"],
+            "orig_labels": data["orig_labels"],
+        },
+    )
+
+    if add_mz_mode:
+
+        data_xarray = add_mz(data_xarray)
+
+    data_xarray.to_netcdf(sorted_filename)
+
+    return outfilename, data_xarray, metrics
+
+
+# ------------------------- old ------------------------
+def analyze_frame_wo_plot_old(
+    dataset,
+    benchmark=False,
+    match_file=None,
+    distance_metric="cityblock",
+    cutoff=0.1,
+    model_data=None,
+    get_tags=None,
+    basepath=Path("./plots"),
+    save_sorted=None,
+    add_mz_mode=False,
+):
+
+    metrics = {}
+
+    if model_data is not None:
+        model_labels = model_data
+    else:
+        model_labels = default_model_labels
+
+    if get_tags is None:
+        model = Path(dataset.iloc[0, :]["model"]).stem
+        if model not in model_labels.keys():
+            raise ValueError(
+                f"Tags to extract not specified and model: {model} unknown."
+            )
+        else:
+            tags = model_labels[model]
+    else:
+        tags = get_tags
+
+    action = dataset.iloc[0, :]["action"]
+
+    first_ids = dataset.iloc[0, :]
+
+    if action == "map" and "lp__" in tags:
+        t = tags.copy()
+        t.remove("lp__")
+        tags = t
+
+    data = get_generic_data_from_multiple_files(dataset["filename"], labels=tags)
+    first_chain = dataset.iloc[0, :]["filename"]  # results location
+    datafile = dataset.iloc[0, :]["datafile"]  # input data file location
+    data["chains"] = len(dataset.filename)
+
+    # Choose the most popular order of the last samples
+    if action == "sampling":
+
+        data["samples"] = int(data["G"].shape[0] / 2)  # sample half of the results
+
+        metrics.update(chain_diagnostics(data))
+
+        merge_chains(data, n=data["samples"])  # extract last n draws from each chain
+
+        slicy = slice(-len(dataset["filename"]), None)
+
+        data, indices = sort_by_Z_contribution(data, take=slicy, metric=distance_metric)
+
+        data["Z"] = np.stack(
+            [data["G"][i, :, :] @ data["F"][i, :, :] for i in range(data["G"].shape[0])]
+        )
 
     elif action == "map":
 
         data["samples"] = min(data["chains"], 1000)
-        # data["samples"] = data["chains"]
 
-        data = sort_by_Z_contribution(
+        data, indices = sort_by_Z_contribution(
             data, take=slice(0, data["samples"]), metric=distance_metric
         )
 
@@ -1418,22 +1633,22 @@ def analyze_frame_wo_plot(
             [data["G"][i, :, :] @ data["F"][i, :, :] for i in range(data["G"].shape[0])]
         )
 
-        # Take metadata from first file (should match across files)
-        with h5py.File(first_file, "r") as infile:
-            time_str = infile["time_index"][()].astype("str")
-            data["timestep"] = pd.to_datetime(time_str, format="%Y-%m-%d %H:%M:%S")
-            data["variable"] = infile["columns"][()].astype("str")
-
     else:
         raise ValueError(f"Unknown action:{action} performed by model")
 
+    # Take metadata (timelist and m/z numbers) from first file (should match across files)
+    with h5py.File(first_chain, "r") as infile:
+        time_str = infile["time_index"][()].astype("str")
+        data["timestep"] = pd.to_datetime(time_str, format="%Y-%m-%d %H:%M:%S")
+        data["variable"] = infile["columns"][()].astype("str")
+
+    # TODO split benchmark and match file
     if benchmark:
-        first_file = dataset.iloc[0, :]["filename"]
+        first_chain = dataset.iloc[0, :]["filename"]
         # Assuming these are normalized correctly and the right size.
-        with h5py.File(first_file, "r") as infile:
+        with h5py.File(first_chain, "r") as infile:
             data["F_orig"] = infile["F_orig"][()]
             data["G_orig"] = infile["G_orig"][()]
-    print(data.keys())
 
     # Sort and label with reference F if available.
     if match_file is not None:
@@ -1481,9 +1696,7 @@ def analyze_frame_wo_plot(
     else:
         data["labels"] = np.arange(data["p"]).astype(str)
 
-    records = dataset.to_dict("records")
-
-    outfilename = get_plot_filename(basepath, first_file)
+    outfilename = get_plot_filename(basepath, first_chain)
     outfilename.parent.mkdir(parents=True, exist_ok=True)
 
     sorted_filename = outfilename.with_suffix(".nc4")
@@ -1538,4 +1751,4 @@ def analyze_frame_wo_plot(
 
     #     data_xarray.to_netcdf(sorted_filename)
 
-    return outfilename,data_xarray, metrics
+    return outfilename, data_xarray, metrics
