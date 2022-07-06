@@ -170,9 +170,9 @@ posterior_analysis <- function(csv_file_posterior, G_, output_file){
       plot_z_scores_g(samples, G_, mean_labels[i,2], i)
       plot_median_error_g(samples, G_, mean_labels[i,2], i)
      
-      blue <- rgb(0, 0, 1, alpha=0.1)
-      n<- barplot( as.numeric(F_[i,]),col=blue, main=paste0("F component:", as.character(i))) 
-      boxplot(samples$F[,i,], frame=F,range=0, at=n, add=T)
+      #blue <- rgb(0, 0, 1, alpha=0.1)
+      #n<- barplot( as.numeric(F_[i,]),col=blue, main=paste0("F component:", as.character(i))) 
+      #boxplot(samples$F[,i,], frame=F,range=0, at=n, add=T)
   }
 
 

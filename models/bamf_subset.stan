@@ -19,19 +19,46 @@ data {
   
   int<lower=1>S;
   int selected_indexes[S];
+  
+    
+  matrix<lower=0>[p,S] F;
+  int not_selected_indexes[m-S];
 }
+
 
 transformed data {
   vector[n*S] Xv = to_vector(X[:,selected_indexes]);
   vector[n*S] sigmav = to_vector(sigma[:,selected_indexes]);
+   
+     
+  vector[n*(m-S)] Xn = to_vector(X[:,not_selected_indexes]);
+  vector[n*(m-S)] sigma_n = to_vector(sigma[:,not_selected_indexes]);
+  
+  vector[p] row_sums;
+  
+  for(i in 1:p){
+    row_sums[i]=sum(F[i,:]);
+  }
+  
+  
 }
 
 parameters {
   matrix<lower=0>[n,p] G; // score matrix
-  simplex[m] F[p]; // loadings simplex
   vector<lower=0>[p] alpha_a; // Posterior a
   vector<lower=minerr>[p] alpha_b; // Posterior b
+  
+  
+  simplex[m-S] F_n[p];
 }
+
+transformed parameters{
+  matrix[p,m-S] F_non_selected;
+  for(i in 1:p){
+    F_non_selected[i,:] = row_sums[i]*F_n[i]';
+  }
+}
+
 
 model {
 
@@ -45,6 +72,6 @@ model {
   }
 
   // X ~ Z = G * F
-  Xv ~ normal(to_vector(G*vector_array_to_matrix(F)[:,selected_indexes]), sigmav);
-
+  Xv ~ normal(to_vector(G*F), sigmav);
+  Xn ~ normal(to_vector(G*F_non_selected), sigma_n);
 }

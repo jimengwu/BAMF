@@ -11,22 +11,46 @@ data {
   int<lower=1> n;     // number of data points
   int<lower=1> m;     // number of dimensions
   int<lower=1> p;     // number of components
+  int<lower=1> S;
   matrix[n,m] X;      // data matrix
   matrix<lower=0>[n,m] sigma;  // separate sigma for each of the observations (!)
   real<lower=0> minerr; //Minimal error
-  matrix[p,m] F;
+  int selected_indexes[S]; //selected columns.
+  
+  matrix<lower=0>[p,S] F;
+  int not_selected_indexes[m-S];
 }
 
 transformed data {
-  vector[n*m] Xv = to_vector(X);
-  vector[n*m] sigmav = to_vector(sigma);
+  vector[n*S] Xv = to_vector(X[:,selected_indexes]);
+  vector[n*S] sigmav = to_vector(sigma[:,selected_indexes]);
+  
+  vector[n*(m-S)] Xn = to_vector(X[:,not_selected_indexes]);
+  vector[n*(m-S)] sigma_n = to_vector(sigma[:,not_selected_indexes]);
+  
+  vector[p] row_sums;
+  
+  for(i in 1:p){
+    row_sums[i]=sum(F[i,:]);
+  }
+  
 }
+
 
 parameters {
   matrix<lower=0>[n,p] G; // score matrix
   vector[p] alpha_a; // Posterior a
   vector[p] alpha_b; // Posterior b
   real<lower=0> sigma_a[p];
+  
+  simplex[m-S] F_n[p];
+}
+
+transformed parameters{
+  matrix[p,m-S] F_non_selected;
+  for(i in 1:p){
+    F_non_selected[i,:] = row_sums[i]*F_n[i]';
+  }
 }
 
 model {
@@ -43,5 +67,6 @@ model {
 
   // X ~ Z = G * F
   Xv ~ normal(to_vector(G*F), 10*sigmav);
-
+  
+  Xn ~ normal(to_vector(G*F_non_selected), 10*sigma_n);
 }
