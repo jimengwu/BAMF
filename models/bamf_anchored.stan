@@ -55,7 +55,7 @@ parameters {
 transformed parameters{
   matrix[p,m-S] F_non_selected;
   for(i in 1:p){
-    F_non_selected[i,:] = row_sums[i]*F_n[i]';
+    F_non_selected[i,:] = (1-row_sums[i])*F_n[i]';
   }
 }
 

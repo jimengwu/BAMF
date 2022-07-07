@@ -42,14 +42,14 @@ parameters {
   vector[p] alpha_a; // Posterior a
   vector[p] alpha_b; // Posterior b
   real<lower=0> sigma_a[p];
-  
+  real<lower=0> K;
   simplex[m-S] F_n[p];
 }
 
 transformed parameters{
   matrix[p,m-S] F_non_selected;
   for(i in 1:p){
-    F_non_selected[i,:] = row_sums[i]*F_n[i]';
+    F_non_selected[i,:] = (1-row_sums[i])*F_n[i]';
   }
 }
 
@@ -64,9 +64,9 @@ model {
     G[1,j] ~ normal(0,10); // the first time point regularised
     G[2:,j] ~ normal(alpha_a[j] + alpha_b[j]*G[:(n-1),j], sigma_a[j]); // gaussian
   }
-
+  K~normal(1,50);
   // X ~ Z = G * F
-  Xv ~ normal(to_vector(G*F), 10*sigmav);
+  Xv ~ normal(to_vector(G*F), K*sigmav);
   
   Xn ~ normal(to_vector(G*F_non_selected), 10*sigma_n);
 }
