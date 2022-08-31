@@ -17,46 +17,44 @@ functions {
 }
 
 data {
-  int<lower=0> N; // number of series
-  int<lower=0> M; // number of amus
+  int<lower=0> m; // number of amus
   int<lower=0> O; // number of coefficients
-  int<lower=0> T; // number of timepoints
-  int<lower=0> P; // latent dimensions
-  matrix<lower=0>[T,M] sigma; 
-  matrix[T,O] B; // Bernstein basis
+  int<lower=0> n; // number of timepoints
+  int<lower=0> p; // latent dimensions
+  matrix<lower=0>[n,m] sigma; 
+  matrix[n,O] B; // Bernstein basis
   // matrix[O,O] D; // Derivative operator
-  matrix[T,M] Xv; // observations
+  matrix[n,m] Xv; // observations
   //matrix[T,T] C; // centering matrix
   //matrix[M,M] S; //Scaling matrix
-  real<lower=0> MAX;
    //matrix[P,M] F;
-   vector[M] concentration;
+   vector[m] concentration;
 }
 parameters {
- matrix[O,P] A;
- ordered[P] sigma_a;
- simplex[M] F[P]; 
- //matrix[T,M] Sigma;
+ matrix[O,p] A;
+ positive_ordered[p] sigma_a;
+ simplex[m] F[p]; 
+ matrix[n,m] Sigma;
  
  real<lower=0> sigmaE;
 }
 
 transformed parameters{
-  
+  matrix[n,p] G; 
   //matrix[T,M] E;
-  matrix[T,P] G;
+  G = B * A + Sigma; 
   //matrix[T,M] G_hat;
   //E = C*(Sigma .* sigma)*S;
-  G = B*A;
   // G_hat= B*A*vector_array_to_matrix(F);
 }
 
 model { 
-  //to_vector(Sigma) ~ normal(0,1);
+  to_vector(Sigma) ~ normal(0,1);
+
   for(j in 1:O){
-      A[j,:] ~ normal(0, exp(sigma_a));
+      A[j,:] ~ normal(0, sigma_a);
   }
-  target += normal_lpdf(to_vector(Xv) | to_vector(G * vector_array_to_matrix(F)), to_vector(sigma));
+  target += normal_lpdf(to_vector(Xv) | to_vector(G * vector_array_to_matrix(F)), 2*to_vector(sigma));
  
 }
 

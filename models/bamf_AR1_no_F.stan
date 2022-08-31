@@ -37,7 +37,7 @@ model {
   
   // Column-wise autocorrelation
   for(j in 1:p) {
-    G[1,j] ~ normal(0,100); // the first time point regularised
+    G[1,j] ~ normal(0,10); // the first time point regularised
     G[2:,j] ~ normal(alpha_a[j] + alpha_b[j]*G[:(n-1),j], sigma_a[j]); // gaussian
   }
 

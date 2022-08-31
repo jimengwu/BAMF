@@ -1,4 +1,3 @@
-import h5py
 import pandas as pd
 import numpy as np
 import pickle
@@ -7,14 +6,9 @@ from operator import itemgetter
 import multiprocessing as mp
 import multiprocessing.connection as connection
 import pystan
-from functools import partial
 import time
-from contextlib import redirect_stderr, redirect_stdout
-import logging
 import sys
 import os
-
-from io import StringIO
 
 from . import helpers, analysis
 
@@ -298,7 +292,6 @@ def compile_model(modelpath, force=False):
 
     with modelpath.open("r") as infile:
         model_definition = infile.read()
-
     model = pystan.StanModel(model_code=model_definition)
     with picklename.open("wb") as f:
         pickle.dump(model, f)

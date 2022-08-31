@@ -1,0 +1,72 @@
+functions {
+  matrix vector_array_to_matrix(vector[] x) {
+    matrix[size(x), rows(x[1])] y;
+    for (m in 1:size(x))
+      y[m] = x[m]';
+    return y;
+  }
+}
+
+data {
+  int<lower=1> n;     // number of data points
+  int<lower=1> m;     // number of dimensions
+  int<lower=1> p;     // number of components
+  int<lower=1> S;
+  matrix[n,m] X;      // data matrix
+  matrix<lower=0>[n,m] sigma;  // separate sigma for each of the observations (!)
+  real<lower=0> minerr; //Minimal error
+  int selected_indexes[S]; //selected columns.
+  
+  matrix<lower=0>[p,S] F;
+  int not_selected_indexes[m-S];
+}
+
+transformed data {
+  vector[n*S] Xv = to_vector(X[:,selected_indexes]);
+  vector[n*S] sigmav = to_vector(sigma[:,selected_indexes]);
+  
+  vector[n*(m-S)] Xn = to_vector(X[:,not_selected_indexes]);
+  vector[n*(m-S)] sigma_n = to_vector(sigma[:,not_selected_indexes]);
+  
+  vector[p] row_sums;
+  
+  for(i in 1:p){
+    row_sums[i]=sum(F[i,:]);
+  }
+  
+}
+
+
+parameters {
+  matrix<lower=0>[n,p] G; // score matrix
+  vector[p] alpha_a; // Posterior a
+  vector[p] alpha_b; // Posterior b
+  real<lower=0> sigma_a[p];
+  real<lower=0> K;
+  simplex[m-S] F_n[p];
+}
+
+transformed parameters{
+  matrix[p,m-S] F_non_selected;
+  for(i in 1:p){
+    F_non_selected[i,:] = (1-row_sums[i])*F_n[i]';
+  }
+}
+
+model {
+
+  // The priors for G and F are implicitly given in the parameters section,
+  //  so explicitly stating them here would only lead to unnecessary calculations
+  //  (uniform priors become additive constants (in logspace), that can be ignored).
+  
+  // Column-wise autocorrelation
+  for(j in 1:p) {
+    G[1,j] ~ normal(0,10); // the first time point regularised
+    G[2:,j] ~ normal(alpha_a[j] + alpha_b[j]*G[:(n-1),j], sigma_a[j]); // gaussian
+  }
+  K~normal(1,50);
+  // X ~ Z = G * F
+  Xv ~ normal(to_vector(G*F), K*sigmav);
+  
+  Xn ~ normal(to_vector(G*F_non_selected), 10*sigma_n);
+}
